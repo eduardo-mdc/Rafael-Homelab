@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: example-webserver
+  namespace: rafael-homelab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: example-webserver
+  template:
+    metadata:
+      labels:
+        app: example-webserver
+    spec:
+      containers:
+        - name: example-webserver
+          image: nginx:1.27
+          ports:
+            - containerPort: 80

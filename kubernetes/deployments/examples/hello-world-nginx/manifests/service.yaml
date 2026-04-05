@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-webserver
+  namespace: rafael-homelab
+spec:
+  selector:
+    app: example-webserver
+  ports:
+    - port: 80
+      targetPort: 80

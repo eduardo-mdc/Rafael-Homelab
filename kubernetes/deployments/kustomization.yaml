@@ -1,0 +1,6 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - examples/examples.app.yaml
+  # add more parent apps here, for example:
+  # - another-app/another-app.app.yaml
