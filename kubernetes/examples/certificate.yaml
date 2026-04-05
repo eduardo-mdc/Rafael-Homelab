@@ -1,0 +1,16 @@
+# Certificate — cert-manager
+# Requests a TLS certificate from Let's Encrypt via Cloudflare DNS-01 challenge.
+# The resulting secret is referenced by the Gateway listener.
+# ClusterIssuer "letsencrypt-cloudflare-prod" is managed in the porto-cluster core.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: my-app-tls-cert
+  namespace: my-namespace
+spec:
+  secretName: my-app-tls-cert
+  issuerRef:
+    name: letsencrypt-cloudflare-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - my-app.duarte-correia.pt

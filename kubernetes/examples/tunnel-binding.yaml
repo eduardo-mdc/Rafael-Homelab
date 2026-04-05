@@ -1,0 +1,20 @@
+# TunnelBinding — Cloudflare Tunnel operator (networking.cfargotunnel.com)
+# Registers a hostname on the shared ClusterTunnel without exposing a public port.
+# Use this instead of (or alongside) the Gateway when you want Cloudflare proxying.
+# "porto-cluster-tunnel" is the shared ClusterTunnel managed in porto-cluster core.
+apiVersion: networking.cfargotunnel.com/v1alpha1
+kind: TunnelBinding
+metadata:
+  name: my-app
+  namespace: my-namespace
+subjects:
+  - name: my-app
+    spec:
+      fqdn: my-app.duarte-correia.pt
+      protocol: http
+      http2Origin: true
+      noTlsVerify: true
+      target: http://my-app.my-namespace.svc.cluster.local:8000
+tunnelRef:
+  kind: ClusterTunnel
+  name: porto-cluster-tunnel

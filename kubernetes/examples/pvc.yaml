@@ -1,0 +1,16 @@
+# PersistentVolumeClaim — Longhorn (default StorageClass)
+# Use for app data that must survive pod restarts.
+# ReadWriteOnce = single node; use ReadWriteMany only if multiple pods need concurrent access.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: my-app-data
+  namespace: my-namespace
+  labels:
+    app.kubernetes.io/name: my-app
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi

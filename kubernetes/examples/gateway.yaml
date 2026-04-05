@@ -1,0 +1,74 @@
+# Gateway + HTTPRoute — Envoy Gateway (gateway.networking.k8s.io)
+# Gateway opens a HTTPS listener and terminates TLS using the cert-manager secret.
+# HTTPRoute routes traffic to the app Service.
+# BackendTrafficPolicy / ClientTrafficPolicy set idle and request timeouts.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: my-app-gateway
+  namespace: my-namespace
+spec:
+  gatewayClassName: envoy
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: "my-app.duarte-correia.pt"
+      allowedRoutes:
+        namespaces:
+          from: Same
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: my-app-tls-cert
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: my-app-http
+  namespace: my-namespace
+spec:
+  parentRefs:
+    - name: my-app-gateway
+      namespace: my-namespace
+  hostnames:
+    - "my-app.duarte-correia.pt"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: my-app
+          port: 8000
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: my-app-backend-policy
+  namespace: my-namespace
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: my-app-http
+  timeout:
+    http:
+      connectionIdleTimeout: 300s
+      maxConnectionDuration: 300s
+      requestTimeout: 300s
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: my-app-client-policy
+  namespace: my-namespace
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: my-app-gateway
+  timeout:
+    http:
+      idleTimeout: 300s

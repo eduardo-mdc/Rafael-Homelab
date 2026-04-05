@@ -1,0 +1,59 @@
+# CNPG Cluster — CloudNativePG
+# Deploys a 3-instance HA PostgreSQL 17 cluster.
+# Credentials come from an ExternalSecret (see external-secret.yaml example).
+# Continuous WAL archiving + daily scheduled backup go to Backblaze B2 via S3.
+# The "-rw" service (e.g. my-app-postgres-rw:5432) is the primary write endpoint;
+# "-ro" is the read-only replica endpoint.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: my-app-postgres
+  namespace: my-namespace
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.2
+
+  storage:
+    size: 5Gi
+
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
+      secret:
+        name: my-app-db-secret
+
+  superuserSecret:
+    name: my-app-db-secret
+
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://porto-k8s-backup/cnpg/my-app
+      endpointURL: https://s3.eu-central-003.backblazeb2.com
+      s3Credentials:
+        accessKeyId:
+          name: my-app-backup-s3-secret
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: my-app-backup-s3-secret
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: bzip2
+        maxParallel: 2
+      data:
+        compression: bzip2
+    retentionPolicy: "30d"
+---
+# ScheduledBackup — triggers a full backup daily at 02:00.
+# barmanObjectStore writes to the same B2 bucket defined in the Cluster above.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: my-app-postgres-backup
+  namespace: my-namespace
+spec:
+  schedule: "0 0 2 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: my-app-postgres
+  method: barmanObjectStore
