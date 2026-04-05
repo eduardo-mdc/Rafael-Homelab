@@ -2,23 +2,19 @@ apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: examples
-  namespace: default
+  namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  project: rafael-homelab
+  project: default
   source:
     repoURL: git@github.com:eduardo-mdc/Rafael-Homelab.git
     targetRevision: HEAD
     path: kubernetes/deployments/examples
-    directory:
-      recurse: true
   destination:
     server: https://kubernetes.default.svc
-    namespace: rafael-homelab
+    namespace: argocd
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
-    syncOptions:
-      - ServerSideApply=true
