@@ -1,0 +1,12 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: portfolio-tls-cert
+  namespace: portfolio
+spec:
+  secretName: portfolio-tls-cert
+  issuerRef:
+    name: letsencrypt-cloudflare-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - rafael.duarte-correia.pt
