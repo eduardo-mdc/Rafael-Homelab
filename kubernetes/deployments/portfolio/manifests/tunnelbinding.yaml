@@ -1,0 +1,16 @@
+apiVersion: networking.cfargotunnel.com/v1alpha1
+kind: TunnelBinding
+metadata:
+  name: portfolio
+  namespace: portfolio
+subjects:
+  - name: portfolio
+    spec:
+      fqdn: rafael.duarte-correia.pt
+      protocol: http
+      http2Origin: true
+      noTlsVerify: true
+      target: http://portfolio.portfolio.svc.cluster.local:8000
+tunnelRef:
+  kind: ClusterTunnel
+  name: porto-cluster-tunnel
