@@ -1,0 +1,4 @@
+# Kubeconfig files with credentials
+rafael-kubeconfig.yaml
+*-kubeconfig.yaml
+kubeconfig.yaml
