@@ -2,7 +2,7 @@ apiVersion: networking.cfargotunnel.com/v1alpha1
 kind: TunnelBinding
 metadata:
   name: portfolio
-  namespace: portfolio
+  namespace: rafael-homelab
 subjects:
   - name: portfolio
     spec:
@@ -10,7 +10,7 @@ subjects:
       protocol: http
       http2Origin: true
       noTlsVerify: true
-      target: http://portfolio.portfolio.svc.cluster.local:8000
+      target: http://portfolio.rafael-homelab.svc.cluster.local:8000
 tunnelRef:
   kind: ClusterTunnel
   name: porto-cluster-tunnel
