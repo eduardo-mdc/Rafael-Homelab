@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: portfolio
-  namespace: portfolio
+  namespace: rafael-homelab
 spec:
   selector:
     app: portfolio
