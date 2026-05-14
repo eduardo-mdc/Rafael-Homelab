@@ -6,7 +6,7 @@ metadata:
 subjects:
   - name: portfolio
     spec:
-      fqdn: rafael.duarte-correia.pt
+      fqdn: rafael-new.duarte-correia.pt
       protocol: http
       http2Origin: true
       noTlsVerify: true
