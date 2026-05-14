@@ -55,17 +55,15 @@ spec:
             - name: media
               mountPath: /app/media
           readinessProbe:
-            httpGet:
-              path: /
+            tcpSocket:
               port: 8000
-            initialDelaySeconds: 20
+            initialDelaySeconds: 90
             periodSeconds: 10
             failureThreshold: 5
           livenessProbe:
-            httpGet:
-              path: /
+            tcpSocket:
               port: 8000
-            initialDelaySeconds: 120
+            initialDelaySeconds: 90
             periodSeconds: 15
             failureThreshold: 3
           resources:
