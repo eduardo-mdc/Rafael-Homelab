@@ -37,11 +37,20 @@ spec:
                 secretKeyRef:
                   name: portfolio-app-secret
                   key: DJANGO_SECRET_KEY
-            - name: DATABASE_URL
+            - name: POSTGRES_DB
+              value: "portfolio"
+            - name: POSTGRES_HOST
+              value: "portfolio-postgres-rw"
+            - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
                   name: portfolio-db-secret
-                  key: DATABASE_URL
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: portfolio-db-secret
+                  key: password
           volumeMounts:
             - name: media
               mountPath: /app/media
