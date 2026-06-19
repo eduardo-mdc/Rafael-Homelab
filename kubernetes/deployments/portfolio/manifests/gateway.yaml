@@ -31,12 +31,30 @@ spec:
   hostnames:
     - "rafael.duarte-correia.pt"
   rules:
+    # CMS / Django admin + their static assets stay on the backend (the frontend
+    # does not proxy these). Reachable via this (LAN) Gateway; the WAN tunnel
+    # points only at the frontend, so /cms is not publicly exposed.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /cms
+        - path:
+            type: PathPrefix
+            value: /admin
+        - path:
+            type: PathPrefix
+            value: /static
+      backendRefs:
+        - name: portfolio
+          port: 3000
+    # Everything else → the public frontend, which proxies /api, /media,
+    # /documents and /resume back to the backend in-cluster.
     - matches:
         - path:
             type: PathPrefix
             value: /
       backendRefs:
-        - name: portfolio
+        - name: portfolio-frontend
           port: 8000
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1

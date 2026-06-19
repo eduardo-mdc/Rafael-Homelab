@@ -4,13 +4,16 @@ metadata:
   name: portfolio
   namespace: rafael-homelab
 subjects:
-  - name: portfolio
+  # Public (WAN) traffic terminates at the frontend; the backend stays
+  # in-cluster and is reached only via the frontend's proxy. /cms is therefore
+  # not exposed over the tunnel — reach it via the LAN Gateway or a port-forward.
+  - name: portfolio-frontend
     spec:
       fqdn: rafael.duarte-correia.pt
       protocol: http
       http2Origin: true
       noTlsVerify: true
-      target: http://portfolio.rafael-homelab.svc.cluster.local:8000
+      target: http://portfolio-frontend.rafael-homelab.svc.cluster.local:8000
 tunnelRef:
   kind: ClusterTunnel
   name: porto-cluster-tunnel

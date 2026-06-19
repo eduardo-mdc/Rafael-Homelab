@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-frontend
+  namespace: rafael-homelab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-frontend
+  template:
+    metadata:
+      labels:
+        app: portfolio-frontend
+    spec:
+      containers:
+        - name: portfolio-frontend
+          image: hydrodog11/portfolio-frontend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            # Public component listens on 8000 (the port the tunnel targets).
+            - name: PORT
+              value: "8000"
+            # In-cluster backend (SSR fetches). Browser never sees this — the
+            # frontend proxies /api, /media, /documents, /resume to it.
+            - name: INTERNAL_API_URL
+              value: "http://portfolio.rafael-homelab.svc.cluster.local:3000"
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 5
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
