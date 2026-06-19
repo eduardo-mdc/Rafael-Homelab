@@ -27,6 +27,9 @@ spec:
             # frontend proxies /api, /media, /documents, /resume to it.
             - name: INTERNAL_API_URL
               value: "http://portfolio.rafael-homelab.svc.cluster.local:3000"
+            # Public origin — makes OG share images and sitemap URLs absolute.
+            - name: SITE_URL
+              value: "https://rafael.duarte-correia.pt"
           readinessProbe:
             tcpSocket:
               port: 8000
