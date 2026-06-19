@@ -11,10 +11,10 @@ spec:
   dnsNames:
     - rafael.duarte-correia.pt
 ---
-# CMS host. Issued via DNS-01, which does NOT require the name to be publicly
-# HTTP-reachable — so cms.rafael.duarte-correia.pt has no public A/CNAME record
-# (not resolvable on the internet) yet still gets a real Let's Encrypt cert.
-# Resolve it on the LAN only, via internal DNS → the Envoy Gateway address.
+# CMS host cert for the LAN/Gateway path (Envoy terminates TLS with this).
+# Single-level subdomain so Cloudflare's Universal SSL also covers it for the
+# tunnel path (2-level cms.rafael.* was not covered → SSL_ERROR_NO_CYPHER_OVERLAP).
+# Issued via DNS-01, so it needs no public A/CNAME record of its own.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -26,4 +26,4 @@ spec:
     name: letsencrypt-cloudflare-prod
     kind: ClusterIssuer
   dnsNames:
-    - cms.rafael.duarte-correia.pt
+    - rafael-cms.duarte-correia.pt
