@@ -18,7 +18,7 @@ subjects:
   # login; only the admin surface lives here. Points straight at the backend.
   - name: portfolio
     spec:
-      fqdn: cms.rafael.duarte-correia.pt
+      fqdn: rafael-cms.duarte-correia.pt
       protocol: http
       http2Origin: true
       noTlsVerify: true

@@ -23,7 +23,7 @@ spec:
     - name: https-cms
       protocol: HTTPS
       port: 443
-      hostname: "cms.rafael.duarte-correia.pt"
+      hostname: "rafael-cms.duarte-correia.pt"
       allowedRoutes:
         namespaces:
           from: Same
@@ -68,7 +68,7 @@ spec:
       namespace: rafael-homelab
       sectionName: https-cms
   hostnames:
-    - "cms.rafael.duarte-correia.pt"
+    - "rafael-cms.duarte-correia.pt"
   rules:
     # The whole Django/Wagtail surface (/cms, /admin, /static, /api, /media,
     # /documents, /resume) straight off the backend — internal access only.
