@@ -10,3 +10,20 @@ spec:
     kind: ClusterIssuer
   dnsNames:
     - rafael.duarte-correia.pt
+---
+# CMS host. Issued via DNS-01, which does NOT require the name to be publicly
+# HTTP-reachable — so cms.rafael.duarte-correia.pt has no public A/CNAME record
+# (not resolvable on the internet) yet still gets a real Let's Encrypt cert.
+# Resolve it on the LAN only, via internal DNS → the Envoy Gateway address.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: portfolio-cms-tls-cert
+  namespace: rafael-homelab
+spec:
+  secretName: portfolio-cms-tls-cert
+  issuerRef:
+    name: letsencrypt-cloudflare-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - cms.rafael.duarte-correia.pt
