@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: umami
+  namespace: rafael-homelab
+spec:
+  selector:
+    app: umami
+  ports:
+    - port: 3000
+      targetPort: 3000

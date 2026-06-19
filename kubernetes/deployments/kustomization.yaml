@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - examples/examples.app.yaml
   - portfolio/portfolio.app.yaml
+  - umami/umami.app.yaml
