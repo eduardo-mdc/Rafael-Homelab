@@ -22,11 +22,12 @@ spec:
           env:
             - name: DATABASE_TYPE
               value: postgresql
+            # CNPG auto-generates this secret with a matching role + URI.
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: umami-db-secret
-                  key: DATABASE_URL
+                  name: umami-postgres-app
+                  key: uri
             - name: APP_SECRET
               valueFrom:
                 secretKeyRef:

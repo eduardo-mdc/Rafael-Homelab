@@ -24,8 +24,6 @@ spec:
     initdb:
       database: umami
       owner: umami
-      secret:
-        name: umami-db-secret
-
-  superuserSecret:
-    name: umami-db-secret
+      # No secret → CNPG generates the owner role + password and publishes a
+      # ready connection URI in the umami-postgres-app secret. Umami reads that
+      # exact secret, so the app and DB can never have mismatched credentials.
