@@ -30,6 +30,11 @@ spec:
             # Public origin — makes OG share images and sitemap URLs absolute.
             - name: SITE_URL
               value: "https://rafael.duarte-correia.pt"
+            # Self-hosted Umami analytics. Both must be set for the tag to render.
+            - name: UMAMI_SRC
+              value: "https://rafael-analytics.duarte-correia.pt/script.js"
+            - name: UMAMI_WEBSITE_ID
+              value: "f8205cd1-6084-446c-a640-884df4937bc7"
           readinessProbe:
             tcpSocket:
               port: 8000
