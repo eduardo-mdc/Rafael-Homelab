@@ -4,12 +4,12 @@ metadata:
   name: umami
   namespace: rafael-homelab
 subjects:
-  # analytics.duarte-correia.pt is a 1-level subdomain, so it's covered by
-  # Cloudflare Universal SSL (TLS terminates at the edge) — no cert-manager
+  # rafael-analytics.duarte-correia.pt is a 1-level subdomain, so it's covered
+  # by Cloudflare Universal SSL (TLS terminates at the edge) — no cert-manager
   # Certificate/Gateway needed, mirroring the rafael-cms tunnel-only setup.
   - name: umami
     spec:
-      fqdn: analytics.duarte-correia.pt
+      fqdn: rafael-analytics.duarte-correia.pt
       protocol: http
       http2Origin: true
       noTlsVerify: true
