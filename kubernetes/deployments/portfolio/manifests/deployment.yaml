@@ -5,6 +5,11 @@ metadata:
   namespace: rafael-homelab
 spec:
   replicas: 1
+  # The media PVC is ReadWriteOnce, so a rolling update deadlocks: the new pod
+  # can't attach the volume the old pod still holds. Recreate stops the old pod
+  # first (brief downtime) then starts the new one.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: portfolio
@@ -29,9 +34,11 @@ spec:
             # Frontend proxies with Host = the internal Service it targets, so
             # the in-cluster name must be allowed alongside the public domain.
             - name: DJANGO_ALLOWED_HOSTS
-              value: "rafael.duarte-correia.pt,portfolio,portfolio.rafael-homelab.svc.cluster.local"
+              value: "rafael.duarte-correia.pt,cms.rafael.duarte-correia.pt,portfolio,portfolio.rafael-homelab.svc.cluster.local"
+            # cms. host is where the admin lives now, so its origin must be
+            # trusted for the login/CSRF POST.
             - name: CSRF_TRUSTED_ORIGINS
-              value: "https://rafael.duarte-correia.pt"
+              value: "https://rafael.duarte-correia.pt,https://cms.rafael.duarte-correia.pt"
             - name: WAGTAIL_BASE_URL
               value: "https://rafael.duarte-correia.pt"
             - name: DJANGO_SECRET_KEY

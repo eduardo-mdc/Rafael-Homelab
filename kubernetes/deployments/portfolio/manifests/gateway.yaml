@@ -18,6 +18,20 @@ spec:
         certificateRefs:
           - kind: Secret
             name: portfolio-tls-cert
+    # Internal-only CMS host. Same Gateway, distinct hostname + cert. Has no
+    # public DNS record — reachable only via LAN DNS pointing at this Gateway.
+    - name: https-cms
+      protocol: HTTPS
+      port: 443
+      hostname: "cms.rafael.duarte-correia.pt"
+      allowedRoutes:
+        namespaces:
+          from: Same
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: portfolio-cms-tls-cert
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -28,27 +42,13 @@ spec:
   parentRefs:
     - name: portfolio-gateway
       namespace: rafael-homelab
+      sectionName: https
   hostnames:
     - "rafael.duarte-correia.pt"
   rules:
-    # CMS / Django admin + their static assets stay on the backend (the frontend
-    # does not proxy these). Reachable via this (LAN) Gateway; the WAN tunnel
-    # points only at the frontend, so /cms is not publicly exposed.
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /cms
-        - path:
-            type: PathPrefix
-            value: /admin
-        - path:
-            type: PathPrefix
-            value: /static
-      backendRefs:
-        - name: portfolio
-          port: 3000
-    # Everything else → the public frontend, which proxies /api, /media,
-    # /documents and /resume back to the backend in-cluster.
+    # Public site → the frontend, which proxies /api, /media, /documents and
+    # /resume back to the backend in-cluster. The CMS/admin surface is NOT here;
+    # it lives on the internal cms. host below.
     - matches:
         - path:
             type: PathPrefix
@@ -56,6 +56,29 @@ spec:
       backendRefs:
         - name: portfolio-frontend
           port: 8000
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: portfolio-cms-http
+  namespace: rafael-homelab
+spec:
+  parentRefs:
+    - name: portfolio-gateway
+      namespace: rafael-homelab
+      sectionName: https-cms
+  hostnames:
+    - "cms.rafael.duarte-correia.pt"
+  rules:
+    # The whole Django/Wagtail surface (/cms, /admin, /static, /api, /media,
+    # /documents, /resume) straight off the backend — internal access only.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: portfolio
+          port: 3000
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: BackendTrafficPolicy
@@ -67,6 +90,9 @@ spec:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       name: portfolio-http
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: portfolio-cms-http
   timeout:
     http:
       connectionIdleTimeout: 300s
