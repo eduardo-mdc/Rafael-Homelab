@@ -4,8 +4,8 @@ metadata:
   name: umami-postgres
   namespace: rafael-homelab
 spec:
-  # Analytics is non-critical; a single instance keeps it light.
-  instances: 1
+  # 3 instances (1 primary + 2 replicas) for HA, matching the portfolio cluster.
+  instances: 3
   imageName: ghcr.io/cloudnative-pg/postgresql:17.2
 
   storage:
