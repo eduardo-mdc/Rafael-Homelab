@@ -8,6 +8,15 @@ spec:
   instances: 3
   imageName: ghcr.io/cloudnative-pg/postgresql:17.2
 
+  # Cap memory per instance (the cluster is tight on RAM). Without this, each
+  # Postgres pod sizes its cache to the node — this bounds all three.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 192Mi
+    limits:
+      memory: 512Mi
+
   storage:
     size: 2Gi
 
