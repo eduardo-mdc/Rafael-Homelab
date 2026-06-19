@@ -3,6 +3,12 @@ kind: Deployment
 metadata:
   name: portfolio
   namespace: rafael-homelab
+  annotations:
+    # The live object still carries spec.strategy.rollingUpdate from when it
+    # defaulted to RollingUpdate; a strategic-merge apply can't drop it, so
+    # switching to Recreate is rejected ("may not be specified when strategy
+    # type is 'Recreate'"). Replace rewrites the whole object, clearing it.
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   replicas: 1
   # The media PVC is ReadWriteOnce, so a rolling update deadlocks: the new pod
