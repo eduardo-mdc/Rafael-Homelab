@@ -47,6 +47,10 @@ spec:
               value: "https://rafael.duarte-correia.pt,https://cms.rafael.duarte-correia.pt"
             - name: WAGTAIL_BASE_URL
               value: "https://rafael.duarte-correia.pt"
+            # Public frontend. Headless page serve/preview redirect here, and the
+            # CMS "Preview" button opens <FRONTEND_BASE_URL>/preview?...
+            - name: FRONTEND_BASE_URL
+              value: "https://rafael.duarte-correia.pt"
             - name: DJANGO_SECRET_KEY
               valueFrom:
                 secretKeyRef:
