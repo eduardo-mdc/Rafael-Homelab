@@ -5,8 +5,7 @@ metadata:
   namespace: rafael-homelab
 subjects:
   # Public (WAN) traffic terminates at the frontend; the backend stays
-  # in-cluster and is reached only via the frontend's proxy. /cms is therefore
-  # not exposed over the tunnel — reach it via the LAN Gateway or a port-forward.
+  # in-cluster and is reached only via the frontend's proxy.
   - name: portfolio-frontend
     spec:
       fqdn: rafael.duarte-correia.pt
@@ -14,6 +13,16 @@ subjects:
       http2Origin: true
       noTlsVerify: true
       target: http://portfolio-frontend.rafael-homelab.svc.cluster.local:8000
+  # CMS host routed over the tunnel too — LAN DNS is unreliable across the split
+  # networks, so expose it via Cloudflare. It is still gated by the Wagtail
+  # login; only the admin surface lives here. Points straight at the backend.
+  - name: portfolio
+    spec:
+      fqdn: cms.rafael.duarte-correia.pt
+      protocol: http
+      http2Origin: true
+      noTlsVerify: true
+      target: http://portfolio.rafael-homelab.svc.cluster.local:3000
 tunnelRef:
   kind: ClusterTunnel
   name: porto-cluster-tunnel
