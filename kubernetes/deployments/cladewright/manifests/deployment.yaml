@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cladewright-web
+  namespace: rafael-homelab
+spec:
+  replicas: 1 # single replica: the start command runs migrate (must not race)
+  selector:
+    matchLabels:
+      app: cladewright-web
+  template:
+    metadata:
+      labels:
+        app: cladewright-web
+    spec:
+      containers:
+        - name: web
+          image: hydrodog11/cladewright:latest
+          imagePullPolicy: Always
+          # The image CMD runs: migrate && collectstatic && gunicorn :8000.
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DJANGO_SETTINGS_MODULE
+              value: cladewright.settings
+            - name: DJANGO_DEBUG
+              value: "0"
+            - name: APP_PORT
+              value: "8000"
+            - name: DJANGO_ALLOWED_HOSTS
+              value: "cladewright.duarte-correia.pt,cladewright-admin.duarte-correia.pt"
+            - name: CSRF_TRUSTED_ORIGINS
+              value: "https://cladewright.duarte-correia.pt,https://cladewright-admin.duarte-correia.pt"
+            - name: CORS_ALLOWED_ORIGINS
+              value: "https://cladewright.duarte-correia.pt"
+            - name: SITE_DOMAIN
+              value: "cladewright.duarte-correia.pt"
+            - name: SITE_NAME
+              value: "Cladewright"
+            - name: ADMIN_SITE_URL
+              value: "https://cladewright.duarte-correia.pt/"
+            - name: LOGIN_REDIRECT_URL
+              value: "/"
+            - name: CELERY_BROKER_URL
+              value: "redis://cladewright-redis:6379/0"
+            - name: POSTGRES_DB
+              value: "cladewright"
+            - name: POSTGRES_HOST
+              value: "cladewright-postgres-rw"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cladewright-db-secret
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cladewright-db-secret
+                  key: password
+            - name: DJANGO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cladewright-app-secret
+                  key: DJANGO_SECRET_KEY
+            - name: GOOGLE_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: cladewright-app-secret
+                  key: GOOGLE_OAUTH_CLIENT_ID
+            - name: GOOGLE_OAUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cladewright-app-secret
+                  key: GOOGLE_OAUTH_SECRET
+          # TCP probes avoid Django's ALLOWED_HOSTS rejecting a pod-IP Host header.
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 768Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cladewright-web
+  namespace: rafael-homelab
+spec:
+  selector:
+    app: cladewright-web
+  ports:
+    - port: 8000
+      targetPort: 8000

@@ -1,0 +1,46 @@
+# Celery broker. Ephemeral (no persistence): a queued PipelineJob lost on restart is just
+# re-queued from the admin. Cluster-internal only.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cladewright-redis
+  namespace: rafael-homelab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cladewright-redis
+  template:
+    metadata:
+      labels:
+        app: cladewright-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cladewright-redis
+  namespace: rafael-homelab
+spec:
+  selector:
+    app: cladewright-redis
+  ports:
+    - port: 6379
+      targetPort: 6379

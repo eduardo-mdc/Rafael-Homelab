@@ -1,0 +1,27 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: cladewright-tls-cert
+  namespace: rafael-homelab
+spec:
+  secretName: cladewright-tls-cert
+  issuerRef:
+    name: letsencrypt-cloudflare-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - cladewright.duarte-correia.pt
+---
+# Admin host cert (DNS-01, single-level subdomain so Cloudflare Universal SSL covers the
+# tunnel path). Public but staff-gated.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: cladewright-admin-tls-cert
+  namespace: rafael-homelab
+spec:
+  secretName: cladewright-admin-tls-cert
+  issuerRef:
+    name: letsencrypt-cloudflare-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - cladewright-admin.duarte-correia.pt

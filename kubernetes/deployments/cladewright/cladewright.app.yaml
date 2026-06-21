@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cladewright
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: web=hydrodog11/cladewright,worker=hydrodog11/cladewright-pipeline,frontend=hydrodog11/cladewright-frontend
+    argocd-image-updater.argoproj.io/web.update-strategy: digest
+    argocd-image-updater.argoproj.io/web.tag-filter: latest
+    argocd-image-updater.argoproj.io/worker.update-strategy: digest
+    argocd-image-updater.argoproj.io/worker.tag-filter: latest
+    argocd-image-updater.argoproj.io/frontend.update-strategy: digest
+    argocd-image-updater.argoproj.io/frontend.tag-filter: latest
+    argocd-image-updater.argoproj.io/write-back-method: git
+    argocd-image-updater.argoproj.io/git-branch: main
+spec:
+  project: rafael-homelab
+  source:
+    repoURL: git@github.com:eduardo-mdc/Rafael-Homelab.git
+    targetRevision: HEAD
+    path: kubernetes/deployments/cladewright/manifests
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rafael-homelab
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true

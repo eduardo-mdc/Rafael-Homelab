@@ -1,0 +1,21 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: cladewright-postgres
+  namespace: rafael-homelab
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.2
+
+  storage:
+    size: 5Gi
+
+  bootstrap:
+    initdb:
+      database: cladewright
+      owner: cladewright
+      secret:
+        name: cladewright-db-secret
+
+  superuserSecret:
+    name: cladewright-db-secret

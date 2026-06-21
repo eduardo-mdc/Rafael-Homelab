@@ -1,0 +1,15 @@
+# The CoL dump (~1 GB) lives here; the pipeline worker mounts it RW at /app/data and the
+# admin "Download CoL dump" job populates it. Only the worker touches it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cladewright-dump
+  namespace: rafael-homelab
+  labels:
+    app.kubernetes.io/name: cladewright
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 8Gi

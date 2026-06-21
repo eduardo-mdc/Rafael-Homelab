@@ -1,0 +1,59 @@
+# Public frontend: nginx serving the Vite SPA + proxying /api,/accounts to the web Service.
+# The Cloudflare tunnel points the public host here.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cladewright-frontend
+  namespace: rafael-homelab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cladewright-frontend
+  template:
+    metadata:
+      labels:
+        app: cladewright-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: hydrodog11/cladewright-frontend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          env:
+            # The web Service the SPA's nginx proxies /api + /accounts to (envsubst'd into
+            # the nginx template at start).
+            - name: BACKEND_UPSTREAM
+              value: "cladewright-web:8000"
+          readinessProbe:
+            tcpSocket:
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 5
+          livenessProbe:
+            tcpSocket:
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cladewright-frontend
+  namespace: rafael-homelab
+spec:
+  selector:
+    app: cladewright-frontend
+  ports:
+    - port: 80
+      targetPort: 80

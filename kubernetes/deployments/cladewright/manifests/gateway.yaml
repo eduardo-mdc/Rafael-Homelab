@@ -1,0 +1,111 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: cladewright-gateway
+  namespace: rafael-homelab
+spec:
+  gatewayClassName: envoy
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: "cladewright.duarte-correia.pt"
+      allowedRoutes:
+        namespaces:
+          from: Same
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: cladewright-tls-cert
+    # Admin host. Public (over the tunnel), staff-gated by Django auth. Single-level
+    # subdomain so Cloudflare Universal SSL covers it on the tunnel path.
+    - name: https-admin
+      protocol: HTTPS
+      port: 443
+      hostname: "cladewright-admin.duarte-correia.pt"
+      allowedRoutes:
+        namespaces:
+          from: Same
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: cladewright-admin-tls-cert
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cladewright-http
+  namespace: rafael-homelab
+spec:
+  parentRefs:
+    - name: cladewright-gateway
+      namespace: rafael-homelab
+      sectionName: https
+  hostnames:
+    - "cladewright.duarte-correia.pt"
+  rules:
+    # Public site → the frontend, which proxies /api + /accounts to the backend in-cluster.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: cladewright-frontend
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cladewright-admin-http
+  namespace: rafael-homelab
+spec:
+  parentRefs:
+    - name: cladewright-gateway
+      namespace: rafael-homelab
+      sectionName: https-admin
+  hostnames:
+    - "cladewright-admin.duarte-correia.pt"
+  rules:
+    # The Django admin (/admin) + its WhiteNoise /static, straight off the backend.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: cladewright-web
+          port: 8000
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: cladewright-backend-policy
+  namespace: rafael-homelab
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: cladewright-http
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: cladewright-admin-http
+  timeout:
+    http:
+      connectionIdleTimeout: 300s
+      maxConnectionDuration: 300s
+      requestTimeout: 60s
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: cladewright-client-policy
+  namespace: rafael-homelab
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: cladewright-gateway
+  timeout:
+    http:
+      idleTimeout: 300s

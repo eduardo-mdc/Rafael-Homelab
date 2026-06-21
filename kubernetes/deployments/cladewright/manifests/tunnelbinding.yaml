@@ -1,0 +1,26 @@
+apiVersion: networking.cfargotunnel.com/v1alpha1
+kind: TunnelBinding
+metadata:
+  name: cladewright
+  namespace: rafael-homelab
+subjects:
+  # Public site → the frontend (proxies /api + /accounts to the backend in-cluster).
+  - name: cladewright-frontend
+    spec:
+      fqdn: cladewright.duarte-correia.pt
+      protocol: http
+      http2Origin: true
+      noTlsVerify: true
+      target: http://cladewright-frontend.rafael-homelab.svc.cluster.local:80
+  # Admin host → straight at the backend. Public over the tunnel (LAN DNS is unreliable);
+  # still gated by the Django staff login.
+  - name: cladewright-web
+    spec:
+      fqdn: cladewright-admin.duarte-correia.pt
+      protocol: http
+      http2Origin: true
+      noTlsVerify: true
+      target: http://cladewright-web.rafael-homelab.svc.cluster.local:8000
+tunnelRef:
+  kind: ClusterTunnel
+  name: porto-cluster-tunnel
