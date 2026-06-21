@@ -41,6 +41,11 @@ spec:
               value: "https://cladewright.duarte-correia.pt/"
             - name: LOGIN_REDIRECT_URL
               value: "/"
+            # One-time bootstrap admin (admin/cladewright) created ONLY on a fresh DB (no
+            # superuser yet). CHANGE THE PASSWORD on first login — after that this never
+            # resets it. Remove this env once you've set up your own admin.
+            - name: DJANGO_BOOTSTRAP_ADMIN_PASSWORD
+              value: "cladewright"
             - name: CELERY_BROKER_URL
               value: "redis://cladewright-redis:6379/0"
             - name: POSTGRES_DB
