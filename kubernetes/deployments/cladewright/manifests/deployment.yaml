@@ -17,7 +17,10 @@ spec:
         - name: web
           image: hydrodog11/cladewright:latest
           imagePullPolicy: Always
-          # The image CMD runs: migrate && collectstatic && gunicorn :8000.
+          # The image CMD runs: migrate && collectstatic && gunicorn -k UvicornWorker :8000
+          # (ASGI — serves HTTP + the Clade Clash versus websockets, #36 Phase 1). Stays a
+          # single replica AND a single worker: a live match is serialized by a process-local
+          # lock, so one async process per pod is correct (scaling needs a Redis lock first).
           ports:
             - containerPort: 8000
           env:
@@ -48,6 +51,12 @@ spec:
               value: "cladewright"
             - name: CELERY_BROKER_URL
               value: "redis://cladewright-redis:6379/0"
+            # Clade Clash Channels layer + match state (#36 Phase 1). Same Redis as Celery,
+            # ISOLATED on a distinct logical DB (/1 vs Celery's /0) and a key prefix, so the
+            # two never share a keyspace. (Settings would derive /1 from the broker anyway;
+            # set explicitly for clarity.)
+            - name: CHANNEL_LAYERS_REDIS_URL
+              value: "redis://cladewright-redis:6379/1"
             - name: POSTGRES_DB
               value: "cladewright"
             - name: POSTGRES_HOST

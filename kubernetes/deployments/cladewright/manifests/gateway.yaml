@@ -90,10 +90,13 @@ spec:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       name: cladewright-admin-http
+  # Long connection timeouts so a live Clade Clash versus websocket (#36 Phase 1) survives a
+  # whole match — the round-cap match can run several minutes, and a hard 300s cap would cut
+  # the socket mid-duel. requestTimeout still bounds ordinary (non-upgraded) HTTP requests.
   timeout:
     http:
-      connectionIdleTimeout: 300s
-      maxConnectionDuration: 300s
+      connectionIdleTimeout: 3600s
+      maxConnectionDuration: 3600s
       requestTimeout: 60s
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1
@@ -106,6 +109,7 @@ spec:
     - group: gateway.networking.k8s.io
       kind: Gateway
       name: cladewright-gateway
+  # Raised for long-lived versus websockets (#36 Phase 1); see the BackendTrafficPolicy above.
   timeout:
     http:
-      idleTimeout: 300s
+      idleTimeout: 3600s
