@@ -18,7 +18,14 @@ spec:
       memory: 512Mi
 
   storage:
-    size: 2Gi
+    # 2Gi was too tight: umami's actual data is ~31MB, but pg_wal grew to 1.8GB and filled
+    # the volume, after which CNPG's pre-flight ("Detected low-disk space condition, avoid
+    # starting the instance") refused to start Postgres at all. The WAL was pinned by two
+    # orphaned replication slots (_cnpg_umami_postgres_1 / _3) left behind when those
+    # instances died — a slot makes Postgres retain WAL until a consumer that no longer
+    # exists confirms it, so nothing could ever be recycled. Headroom lets the primary boot;
+    # CNPG then rebuilds 1 and 3, they drain their slots, and the WAL frees itself.
+    size: 5Gi
 
   bootstrap:
     initdb:
