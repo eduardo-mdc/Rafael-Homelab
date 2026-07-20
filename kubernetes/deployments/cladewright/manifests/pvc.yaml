@@ -7,6 +7,14 @@ metadata:
   namespace: rafael-homelab
   labels:
     app.kubernetes.io/name: cladewright
+  annotations:
+    # This PVC predates ServerSideApply=true on the Argo app, so it's still owned by the
+    # kubectl-client-side-apply field manager. Argo's SSA migration replays the old
+    # last-applied-configuration (storageClassName: null, volumeName: "") onto the now-BOUND
+    # claim, and both fields are immutable after binding — the patch is rejected and the whole
+    # app sync fails. Keeping this one object on client-side apply skips the migration.
+    # Drop this once the PVC is recreated (it would then be SSA-owned from birth).
+    argocd.argoproj.io/sync-options: ServerSideApply=false
 spec:
   accessModes:
     - ReadWriteOnce
