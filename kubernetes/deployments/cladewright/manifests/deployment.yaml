@@ -104,11 +104,19 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 256Mi
+              memory: 512Mi
               ephemeral-storage: 256Mi
             limits:
               cpu: 1000m
-              memory: 768Mi
+              # 768Mi OOMKilled the pod (exit 137) when a multi-pack selection was loaded.
+              # The frontend fetches every chosen scope in parallel (loadMixed's Promise.all),
+              # and the asset blobs are big — fish alone is 22MB of JSON, with mammalia/reptilia/
+              # aves/mullusca each 3-5MB. Django reads each blob from Postgres as text, parses
+              # it and buffers the response, so peak is several times the blob size, and with
+              # WEB_CONCURRENCY=1 every concurrent request piles into the SAME process heap.
+              # Selecting "all packs" is therefore ~55MB of source JSON inflating well past
+              # 768Mi at once. Idle sits at ~150Mi, so this is headroom for the spike, not bloat.
+              memory: 2Gi
               ephemeral-storage: 1Gi
 ---
 apiVersion: v1
