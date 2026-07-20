@@ -18,6 +18,11 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
+          # The header above says "ephemeral", but bare `redis-server` uses the built-in
+          # defaults, which snapshot RDB files to /data — i.e. onto the container's writable
+          # layer, which is node ephemeral-storage. Turn both persistence modes off so the
+          # broker really is memory-only and can't contribute to DiskPressure.
+          args: ["redis-server", "--save", "", "--appendonly", "no"]
           ports:
             - containerPort: 6379
           readinessProbe:
@@ -29,9 +34,11 @@ spec:
             requests:
               cpu: 25m
               memory: 64Mi
+              ephemeral-storage: 128Mi
             limits:
               cpu: 200m
               memory: 256Mi
+              ephemeral-storage: 512Mi
 ---
 apiVersion: v1
 kind: Service

@@ -56,10 +56,17 @@ spec:
             requests:
               cpu: 200m
               memory: 1Gi
+              # The ~1 GB CoL dump lands on the PVC at /app/data, not here, so real
+              # ephemeral use is tiny (44Ki when the node evicted it). This request exists
+              # to stop the worker being the FIRST pod killed under node DiskPressure:
+              # kubelet ranks victims by usage above request, so request:0 put it at the
+              # head of the queue no matter how little it was actually using.
+              ephemeral-storage: 512Mi
             limits:
               # A build holds the dump + backbone index in RAM; give it room.
               cpu: 2000m
               memory: 4Gi
+              ephemeral-storage: 2Gi
       volumes:
         - name: dump
           persistentVolumeClaim:
