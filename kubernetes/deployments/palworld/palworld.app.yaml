@@ -1,13 +1,3 @@
-# The manifests for this one live in their own repo: github.com/rafaelmdc/palworld
-# (public, so Argo reads it over plain HTTPS — no deploy key, no repository Secret).
-# Only the Application stays here, because this directory is what the `deployments` app
-# syncs; an Application in the palworld repo would have nothing pointing at it.
-#
-# HEADS UP — the rafael-homelab AppProject currently pins
-#   sourceRepos: ["git@github.com:eduardo-mdc/Rafael-Homelab.git"]
-# so Argo will reject this app with "application repo ... is not permitted in project"
-# until https://github.com/rafaelmdc/palworld.git is added to that list. The AppProject is
-# defined in Eduardo's cluster repo, not this one.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -15,12 +5,21 @@ metadata:
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
+  annotations:
+    # The image is built from github.com/rafaelmdc/palworld (a thin layer over the upstream
+    # community server image) and pushed to Docker Hub. Same digest-on-latest flow as
+    # cladewright: a push there rolls the pod here, written back to this repo.
+    argocd-image-updater.argoproj.io/image-list: palworld=hydrodog11/palworld
+    argocd-image-updater.argoproj.io/palworld.update-strategy: digest
+    argocd-image-updater.argoproj.io/palworld.tag-filter: latest
+    argocd-image-updater.argoproj.io/write-back-method: git
+    argocd-image-updater.argoproj.io/git-branch: main
 spec:
   project: rafael-homelab
   source:
-    repoURL: https://github.com/rafaelmdc/palworld.git
+    repoURL: git@github.com:eduardo-mdc/Rafael-Homelab.git
     targetRevision: HEAD
-    path: manifests
+    path: kubernetes/deployments/palworld/manifests
     directory:
       recurse: true
   destination:

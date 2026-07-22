@@ -1,0 +1,141 @@
+# Palworld dedicated server (1.0 / current public build).
+#
+# Image: hydrodog11/palworld, built from github.com/rafaelmdc/palworld — a thin layer over
+# thijsvanloef/palworld-server-docker, so we control when the server moves and Argo's
+# image-updater can roll it by digest (see the annotations on palworld.app.yaml).
+#
+# Underneath it is a SteamCMD wrapper: on every boot it installs/updates app 2394010 into
+# /palworld, writes PalWorldSettings.ini from the env below, then runs PalServer.sh.
+# There is no "1.0" image tag — the game version comes from Steam, so 1.0 is simply what
+# UPDATE_ON_BOOT pulls. To freeze on a build, set UPDATE_ON_BOOT=false after the first
+# successful start; the installed build then stays put across restarts.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: palworld
+  namespace: rafael-homelab
+  labels:
+    app.kubernetes.io/name: palworld
+spec:
+  replicas: 1 # one process owns the world save; never scale this
+  strategy:
+    # RWO volume + a server that writes the save in place: the old pod must be gone
+    # before the new one attaches. RollingUpdate would deadlock on the volume.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: palworld
+  template:
+    metadata:
+      labels:
+        app: palworld
+    spec:
+      # The image traps SIGTERM, runs an RCON "save" + "shutdown", and waits for the
+      # world to flush. Killing it early is how you lose the last few minutes of play.
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: palworld
+          image: hydrodog11/palworld:latest
+          imagePullPolicy: Always
+          ports:
+            - name: game
+              containerPort: 8211
+              protocol: UDP
+            - name: query
+              containerPort: 27015
+              protocol: UDP
+            - name: rcon
+              containerPort: 25575
+              protocol: TCP
+          env:
+            - name: TZ
+              value: "Europe/Lisbon"
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: PORT
+              value: "8211"
+            - name: QUERY_PORT
+              value: "27015"
+            # 32 is the 1.0 ceiling. Each connected player costs roughly 400-500 MB, so
+            # keep this in step with the memory limit below.
+            - name: PLAYERS
+              value: "16"
+            - name: MULTITHREADING
+              value: "true"
+            # Keep everything on death. The vanilla default is "All", which drops your
+            # items, your equipment AND the Pals in your party where you died — a corpse
+            # run through whatever killed you. Other values: Item (items only),
+            # ItemAndEquipment, All.
+            - name: DEATH_PENALTY
+              value: "None"
+            - name: SERVER_NAME
+              value: "Rafael's Palworld Server"
+            - name: SERVER_DESCRIPTION
+              value: "Hosted on the porto homelab cluster"
+            # Community listing needs a public IPv4 on the query port AND an empty server
+            # password. This server is password-gated, so it stays off — join by IP.
+            - name: COMMUNITY
+              value: "false"
+            - name: UPDATE_ON_BOOT
+              value: "true"
+            - name: RCON_ENABLED
+              value: "true"
+            - name: RCON_PORT
+              value: "25575"
+            # Hourly world backup into /palworld/backups, kept for a week. This is the only
+            # copy of the save that survives a corrupted world file, so leave it on.
+            - name: BACKUP_ENABLED
+              value: "true"
+            - name: BACKUP_CRON_EXPRESSION
+              value: "0 * * * *"
+            - name: DELETE_OLD_BACKUPS
+              value: "true"
+            - name: OLD_BACKUP_DAYS
+              value: "7"
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: palworld-secret
+                  key: ADMIN_PASSWORD
+            - name: SERVER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: palworld-secret
+                  key: SERVER_PASSWORD
+            - name: RCON_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: palworld-secret
+                  key: ADMIN_PASSWORD
+          volumeMounts:
+            - name: data
+              mountPath: /palworld
+          # First boot downloads ~10 GB through SteamCMD before the server ever listens,
+          # so the startup probe gets 30 minutes before liveness starts counting.
+          startupProbe:
+            tcpSocket:
+              port: 25575
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 60
+          livenessProbe:
+            tcpSocket:
+              port: 25575
+            periodSeconds: 30
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: "1"
+              memory: 6Gi
+            limits:
+              # Palworld's memory climbs with world size and player count and it does not
+              # give it back — 8 GB is the documented floor for a populated server and the
+              # OOM killer here means a hard world reload, so the limit is generous.
+              cpu: "4"
+              memory: 12Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: palworld-data

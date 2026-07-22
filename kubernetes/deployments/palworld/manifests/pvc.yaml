@@ -1,0 +1,18 @@
+# Server install + saves + backups, all under /palworld:
+#   Pal/Saved/SaveGames/0/<world-id>/  the world itself (grows with bases/pals, ~1 GB is a lot)
+#   backups/                           hourly tarballs, pruned after 7 days
+#   the rest is the SteamCMD install of the dedicated server (~10 GB)
+# RWO on iscsi-zfs, and the Deployment is Recreate/1 replica so only one pod ever mounts it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: palworld-data
+  namespace: rafael-homelab
+  labels:
+    app.kubernetes.io/name: palworld
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 40Gi

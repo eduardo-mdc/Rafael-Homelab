@@ -1,0 +1,70 @@
+# Backing Services. Nothing is type LoadBalancer here — the Gateway owns the external IP
+# (see gateway.yaml), which is what gets the palworld.duarte-correia.pt record.
+apiVersion: v1
+kind: Service
+metadata:
+  name: palworld
+  namespace: rafael-homelab
+  labels:
+    app.kubernetes.io/name: palworld
+spec:
+  type: ClusterIP
+  selector:
+    app: palworld
+  ports:
+    - name: game
+      port: 8211
+      targetPort: 8211
+      protocol: UDP
+    - name: query
+      port: 27015
+      targetPort: 27015
+      protocol: UDP
+---
+# RCON stays in-cluster only — it is a plaintext admin shell. Reach it with:
+#   kubectl -n rafael-homelab exec deploy/palworld -- rcon-cli "ShowPlayers"
+apiVersion: v1
+kind: Service
+metadata:
+  name: palworld-rcon
+  namespace: rafael-homelab
+  labels:
+    app.kubernetes.io/name: palworld
+spec:
+  type: ClusterIP
+  selector:
+    app: palworld
+  ports:
+    - name: rcon
+      port: 25575
+      targetPort: 25575
+      protocol: TCP
+---
+# Remote play without touching the router: the Tailscale operator publishes this Service on
+# the tailnet as palworld.<tailnet>.ts.net, same pattern as bazarr/sonarr/transmission. A
+# friend installs Tailscale, you share the node with them, and they connect to the tailnet
+# name — no public port anywhere.
+#
+# This is also the hinge for docs/public-access-oracle-relay.md: an Oracle Always Free VM on
+# the same tailnet DNATs udp/8211 at this device, which drops the client requirement for
+# friends entirely. That plan needs no change here, so don't delete this Service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: palworld-tailscale
+  namespace: rafael-homelab
+  labels:
+    app.kubernetes.io/name: palworld
+  annotations:
+    tailscale.com/expose: "true"
+    tailscale.com/hostname: palworld
+    tailscale.com/tags: tag:k8s
+spec:
+  type: ClusterIP
+  selector:
+    app: palworld
+  ports:
+    - name: game
+      port: 8211
+      targetPort: 8211
+      protocol: UDP
