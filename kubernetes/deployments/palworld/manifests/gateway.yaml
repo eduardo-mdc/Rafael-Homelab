@@ -1,0 +1,47 @@
+# L4 UDP gateway for the game protocol — the same shape terraria uses for its TCP port,
+# but on UDPRoute. Palworld speaks raw UDP, so there is no HTTPS listener, no certificate
+# and no Cloudflare TunnelBinding here: the tunnel only carries HTTP.
+#
+# The Gateway takes its own IP from the Cilium pool (172.16.0.100-250) and Cilium announces
+# it on the LAN via L2. That IP is what the DNS record below resolves to.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: palworld-gateway
+  namespace: rafael-homelab
+spec:
+  gatewayClassName: envoy
+  listeners:
+    - name: palworld-udp
+      protocol: UDP
+      port: 8211
+      allowedRoutes:
+        kinds:
+          - group: gateway.networking.k8s.io
+            kind: UDPRoute
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: UDPRoute
+metadata:
+  name: palworld-udp
+  namespace: rafael-homelab
+  annotations:
+    # UDPRoute has no hostnames field (it is L4), so external-dns takes the name from this
+    # annotation — it runs with --source=gateway-udproute and writes an A record into
+    # Pi-hole (172.16.0.254) pointing at the Gateway IP, within about a minute.
+    external-dns.alpha.kubernetes.io/hostname: palworld.duarte-correia.pt
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: palworld-gateway
+      namespace: rafael-homelab
+      sectionName: palworld-udp
+  rules:
+    - backendRefs:
+        - group: ""
+          kind: Service
+          name: palworld
+          port: 8211
