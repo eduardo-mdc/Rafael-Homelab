@@ -1,0 +1,132 @@
+# Palworld's own Tailscale node, on Rafael's personal tailnet.
+#
+# WHY THIS EXISTS instead of the operator's `tailscale.com/expose` annotation:
+# the operator registers every proxy it makes with an ACL tag (tag:k8s), and Tailscale does
+# not allow sharing a tagged machine — "a machine cannot be shared with a tag ... as only
+# users can accept machine shares". The operator is also bound to munchkin-cloud.ts.net,
+# which belongs to Eduardo, so machines there are not Rafael's to share anyway.
+#
+# This node authenticates with an UNTAGGED auth key from Rafael's own tailnet, so it is
+# owned by a user and therefore shareable: admin console → Machines → palworld → Share.
+# The friend accepts the share, installs Tailscale, and connects — no seat in anyone's
+# tailnet, no access to anything but this node.
+#
+# It runs as its OWN pod rather than a sidecar on the game server on purpose: a bad or
+# missing auth key crashlooping here would otherwise make the whole pod NotReady, drop the
+# UDPRoute endpoints and take the LAN players offline with it.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: palworld-tailscale-secret
+  namespace: rafael-homelab
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: bitwarden-secretstore
+    kind: ClusterSecretStore
+  target:
+    name: palworld-tailscale-secret
+    creationPolicy: Owner
+  data:
+    # Bitwarden item: rafael-palworld-tailscale-authkey
+    # Generate at login.tailscale.com/admin/settings/keys with Reusable ON, Ephemeral OFF
+    # and NO tags — a tagged key produces a machine that cannot be shared.
+    #
+    # Deliberately a separate ExternalSecret from palworld-secret: ESO fails an
+    # ExternalSecret as a whole, so folding this into the game server's secret would let a
+    # missing Bitwarden item block the passwords the server needs to boot.
+    - secretKey: TS_AUTHKEY
+      remoteRef:
+        key: rafael-palworld-tailscale-authkey
+---
+# tailscaled's node identity. Without it, every restart registers a NEW machine in the
+# tailnet, which means re-sharing with every friend and a pile of dead "palworld-1,
+# palworld-2" entries in the console.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: palworld-tailscale-state
+  namespace: rafael-homelab
+  labels:
+    app.kubernetes.io/name: palworld
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: palworld-tailscale
+  namespace: rafael-homelab
+  labels:
+    app.kubernetes.io/name: palworld
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # RWO state volume
+  selector:
+    matchLabels:
+      app: palworld-tailscale
+  template:
+    metadata:
+      labels:
+        app: palworld-tailscale
+    spec:
+      containers:
+        - name: tailscale
+          # Pinned to the version the cluster's own operator proxies run, so this node
+          # behaves identically to the ones that already work here.
+          image: tailscale/tailscale:v1.92.5
+          env:
+            - name: TS_HOSTNAME
+              value: palworld
+            - name: TS_STATE_DIR
+              value: /var/lib/tailscale
+            # Kernel networking, not userspace: userspace mode proxies TCP well but is not
+            # a reliable path for a UDP game protocol. This is also what the operator's
+            # working proxy for this same service uses.
+            - name: TS_USERSPACE
+              value: "false"
+            - name: TS_DEBUG_FIREWALL_MODE
+              value: auto
+            # Everything arriving on this node's tailnet IP is forwarded to the game
+            # Service. That ClusterIP is pinned in service.yaml precisely so this value
+            # cannot go stale.
+            - name: TS_DEST_IP
+              value: "10.43.146.235"
+            - name: TS_AUTHKEY
+              valueFrom:
+                secretKeyRef:
+                  name: palworld-tailscale-secret
+                  key: TS_AUTHKEY
+                  # Optional so this pod waits quietly instead of crashlooping before the
+                  # Bitwarden item exists. Check `kubectl logs` for a login URL if it ever
+                  # comes up unauthenticated.
+                  optional: true
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN # bring up tailscale0 and install its iptables rules
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/tailscale
+            - name: dev-tun
+              mountPath: /dev/net/tun
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: palworld-tailscale-state
+        - name: dev-tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
