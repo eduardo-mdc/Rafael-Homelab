@@ -9,6 +9,11 @@ metadata:
     app.kubernetes.io/name: palworld
 spec:
   type: ClusterIP
+  # Pinned, not dynamic: tailscale-relay.yaml forwards to this address via TS_DEST_IP,
+  # which takes a literal IP. If the Service were ever recreated and handed a different
+  # ClusterIP, the tailnet node would silently forward into nothing. This is the address
+  # Kubernetes already assigned, so pinning it changes nothing today.
+  clusterIP: 10.43.146.235
   selector:
     app: palworld
   ports:
@@ -39,32 +44,8 @@ spec:
       port: 25575
       targetPort: 25575
       protocol: TCP
----
-# Remote play without touching the router: the Tailscale operator publishes this Service on
-# the tailnet as palworld.<tailnet>.ts.net, same pattern as bazarr/sonarr/transmission. A
-# friend installs Tailscale, you share the node with them, and they connect to the tailnet
-# name — no public port anywhere.
-#
-# This is also the hinge for docs/public-access-oracle-relay.md: an Oracle Always Free VM on
-# the same tailnet DNATs udp/8211 at this device, which drops the client requirement for
-# friends entirely. That plan needs no change here, so don't delete this Service.
-apiVersion: v1
-kind: Service
-metadata:
-  name: palworld-tailscale
-  namespace: rafael-homelab
-  labels:
-    app.kubernetes.io/name: palworld
-  annotations:
-    tailscale.com/expose: "true"
-    tailscale.com/hostname: palworld
-    tailscale.com/tags: tag:k8s
-spec:
-  type: ClusterIP
-  selector:
-    app: palworld
-  ports:
-    - name: game
-      port: 8211
-      targetPort: 8211
-      protocol: UDP
+# NOTE: there was a `tailscale.com/expose` Service here, which the operator published on
+# munchkin-cloud.ts.net. It is gone, replaced by tailscale-relay.yaml. Two reasons: the
+# operator tags its proxies and Tailscale refuses to share a tagged machine, and that
+# tailnet is Eduardo's, so nothing on it is ours to share. Don't re-add it — you would end
+# up with two machines called "palworld" and only one of them shareable.
