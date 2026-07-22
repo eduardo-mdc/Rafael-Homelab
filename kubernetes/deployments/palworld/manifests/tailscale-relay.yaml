@@ -85,6 +85,14 @@ spec:
               value: palworld
             - name: TS_STATE_DIR
               value: /var/lib/tailscale
+            # MUST be explicitly empty. containerboot notices it is running inside
+            # Kubernetes and defaults TS_KUBE_SECRET to "tailscale", storing node state in
+            # that Secret and ignoring TS_STATE_DIR entirely — which then dies with
+            #   missing get permission on secret "tailscale"
+            # because this pod has no RBAC for it. Blanking it sends state to the PVC
+            # above, which is what the operator's proxies use RBAC to avoid needing.
+            - name: TS_KUBE_SECRET
+              value: ""
             # Kernel networking, not userspace: userspace mode proxies TCP well but is not
             # a reliable path for a UDP game protocol. This is also what the operator's
             # working proxy for this same service uses.
