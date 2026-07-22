@@ -5,3 +5,4 @@ resources:
   - portfolio/portfolio.app.yaml
   - umami/umami.app.yaml
   - cladewright/cladewright.app.yaml
+  - palworld/palworld.app.yaml
