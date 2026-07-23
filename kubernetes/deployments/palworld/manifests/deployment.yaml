@@ -159,11 +159,16 @@ spec:
           resources:
             requests:
               cpu: "1"
-              memory: 6Gi
+              # Measured at ~2.2Gi both idle and with a player on. The request is what
+              # actually reserves capacity on the node, so over-stating it just fences off
+              # memory nothing is using.
+              memory: 3Gi
             limits:
-              # Palworld's memory climbs with world size and player count and it does not
-              # give it back — 8 GB is the documented floor for a populated server and the
-              # OOM killer here means a hard world reload, so the limit is generous.
+              # Cut 12Gi -> 8Gi, but deliberately NOT down to the ~2.2Gi measured today.
+              # Palworld's usage climbs with world size and session length and it does not
+              # hand memory back, and the base/item limits above were just raised, which is
+              # exactly what that growth feeds on. A limit costs nothing until it is hit;
+              # hitting it means an OOM kill mid-session and a world reload.
               #
               # CPU measured rather than guessed: ~1.0 core idle, ~0.9 with a player on, and
               # 16ms of throttling total across 3.5h of uptime. 3 is ~3x observed load.
@@ -172,7 +177,7 @@ spec:
               # nr_throttled in /sys/fs/cgroup/cpu.stat starts climbing, that mismatch is
               # why — and the fix is raising this, not touching MULTITHREADING.
               cpu: "3"
-              memory: 12Gi
+              memory: 8Gi
       volumes:
         - name: data
           persistentVolumeClaim:
