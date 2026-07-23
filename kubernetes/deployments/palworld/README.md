@@ -111,8 +111,26 @@ Rates, difficulty and the rest are the `PalWorldSettings.ini` knobs, exposed as 
 the Deployment (e.g. `DIFFICULTY`, `EXP_RATE`, `PAL_CAPTURE_RATE`, `DAY_TIME_SPEEDRATE`).
 Anything not set keeps the vanilla default.
 
-One default is deliberately overridden: `DEATH_PENALTY=None`, so nothing is dropped on
-death. Vanilla is `All` — items, equipment and your party Pals all stay on the corpse.
+This is a 3-4 player server, so the defaults that exist to protect a busy public server are
+deliberately loosened:
+
+| Setting | Default | Here | Why |
+|---|---|---|---|
+| `DEATH_PENALTY` | `Item` | `None` | nothing dropped on death |
+| `BUILD_OBJECT_DETERIORATION_DAMAGE_RATE` | `1.0` | `0.0` | no base decay while nobody is online |
+| `BASE_CAMP_WORKER_MAX_NUM` | `15` | `20` | more Pals per base (the game UI's ceiling) |
+| `BASE_CAMP_MAX_NUM_IN_GUILD` | `4` | `10` | more bases per guild |
+| `DROP_ITEM_ALIVE_MAX_HOURS` | `1.0` | `24.0` | loot survives a day, not an hour |
+| `DROP_ITEM_MAX_NUM` | `3000` | `5000` | headroom for the longer lifetime |
+| `ENABLE_NON_LOGIN_PENALTY` | `True` | `False` | no penalty for playing on your own schedule |
+| `PLAYERS` | — | `8` | down from 16; spend the memory on the world instead |
+
+Gameplay *rates* (`EXP_RATE`, `PAL_CAPTURE_RATE`, `WORK_SPEED_RATE`, day/night speed) are all
+left vanilla — those change how the game plays rather than what the server will tolerate.
+
+If the server ever gets sluggish, walk back `DROP_ITEM_MAX_NUM` first, then
+`BASE_CAMP_WORKER_MAX_NUM`: dropped items and base Pals are live actors and by far the
+biggest costs here.
 
 Full list of knobs:
 <https://palworld-server-docker.loef.dev/configuration/server-settings>

@@ -58,18 +58,49 @@ spec:
               value: "8211"
             - name: QUERY_PORT
               value: "27015"
-            # 32 is the 1.0 ceiling. Each connected player costs roughly 400-500 MB, so
-            # keep this in step with the memory limit below.
+            # Dropped from 16: this is a 3-4 player server, and the headroom is better
+            # spent on the raised base/item limits below than on 12 slots nobody uses.
+            # Each connected player costs roughly 400-500 MB.
             - name: PLAYERS
-              value: "16"
+              value: "8"
             - name: MULTITHREADING
               value: "true"
-            # Keep everything on death. The vanilla default is "All", which drops your
-            # items, your equipment AND the Pals in your party where you died — a corpse
-            # run through whatever killed you. Other values: Item (items only),
-            # ItemAndEquipment, All.
+            # Keep everything on death. Default is "Item" (drop your inventory, keep gear
+            # and Pals). Other values: ItemAndEquipment, All (also drops your party Pals).
             - name: DEATH_PENALTY
               value: "None"
+            # ---- limits loosened for a 3-4 player server -------------------------------
+            # Every one of these defaults exists to protect a busy public server from the
+            # cost of persistent actors. With four people on a box with 12Gi and 4 cores,
+            # that budget is better spent on the world than held in reserve.
+            #
+            # No structure decay. This is the one that actually bites a small server: bases
+            # rot while nobody is logged in, so a week off means coming back to rubble.
+            - name: BUILD_OBJECT_DETERIORATION_DAMAGE_RATE
+              value: "0.000000"
+            # Pals working per base, 15 -> 20. 20 is as high as the game's own settings UI
+            # goes; this is the single biggest AI cost on the server, which is exactly why
+            # the default is conservative.
+            - name: BASE_CAMP_WORKER_MAX_NUM
+              value: "20"
+            # Bases per guild, 4 -> 10. The global cap (BASE_CAMP_MAX_NUM, 128) is untouched
+            # and nowhere near reachable at this player count.
+            - name: BASE_CAMP_MAX_NUM_IN_GUILD
+              value: "10"
+            # Dropped loot survives a day instead of an hour, so a death far from base isn't
+            # an automatic total loss and you can log off mid-haul.
+            - name: DROP_ITEM_ALIVE_MAX_HOURS
+              value: "24.000000"
+            # Ceiling on simultaneous dropped items, raised in step with the lifetime above
+            # (things persisting 24x longer accumulate). Each is a live actor, so this is
+            # the setting to walk back first if the server ever gets sluggish.
+            - name: DROP_ITEM_MAX_NUM
+              value: "5000"
+            # No penalty for logging off — pointless friction on a server where everyone
+            # plays on their own schedule.
+            - name: ENABLE_NON_LOGIN_PENALTY
+              value: "False"
+            # ---------------------------------------------------------------------------
             - name: SERVER_NAME
               value: "Rafael's Palworld Server"
             - name: SERVER_DESCRIPTION
@@ -133,7 +164,14 @@ spec:
               # Palworld's memory climbs with world size and player count and it does not
               # give it back — 8 GB is the documented floor for a populated server and the
               # OOM killer here means a hard world reload, so the limit is generous.
-              cpu: "4"
+              #
+              # CPU measured rather than guessed: ~1.0 core idle, ~0.9 with a player on, and
+              # 16ms of throttling total across 3.5h of uptime. 3 is ~3x observed load.
+              # Worth knowing: nproc inside the container reports node003's 12 cores, not
+              # this limit, so Unreal sizes its thread pools against 12 either way. If
+              # nr_throttled in /sys/fs/cgroup/cpu.stat starts climbing, that mismatch is
+              # why — and the fix is raising this, not touching MULTITHREADING.
+              cpu: "3"
               memory: 12Gi
       volumes:
         - name: data
