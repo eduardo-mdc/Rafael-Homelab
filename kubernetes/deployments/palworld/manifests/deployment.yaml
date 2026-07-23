@@ -164,7 +164,14 @@ spec:
               # Palworld's memory climbs with world size and player count and it does not
               # give it back — 8 GB is the documented floor for a populated server and the
               # OOM killer here means a hard world reload, so the limit is generous.
-              cpu: "4"
+              #
+              # CPU measured rather than guessed: ~1.0 core idle, ~0.9 with a player on, and
+              # 16ms of throttling total across 3.5h of uptime. 3 is ~3x observed load.
+              # Worth knowing: nproc inside the container reports node003's 12 cores, not
+              # this limit, so Unreal sizes its thread pools against 12 either way. If
+              # nr_throttled in /sys/fs/cgroup/cpu.stat starts climbing, that mismatch is
+              # why — and the fix is raising this, not touching MULTITHREADING.
+              cpu: "3"
               memory: 12Gi
       volumes:
         - name: data
