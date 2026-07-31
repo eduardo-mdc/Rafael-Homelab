@@ -3,7 +3,7 @@
 Bilingual public website (Django + Wagtail) with a React SPA staff area on a DRF
 API. Source: [`website_nubiup`](https://github.com/rafaelcorreia/website_nubiup).
 
-**Currently deployed at `nubiup.duarte-correia.pt`** — a placeholder host. The
+**Currently deployed at `nubi.duarte-correia.pt`** — a placeholder host. The
 project's own domain has not been bought yet; see [Moving to the real
 domain](#moving-to-the-real-domain).
 
@@ -146,7 +146,7 @@ kubectl -n rafael-homelab exec deploy/nubiup-web -c web -it -- \
   python manage.py createsuperuser
 ```
 
-Then sign in at `https://nubiup.duarte-correia.pt/cms/` and assign staff groups
+Then sign in at `https://nubi.duarte-correia.pt/cms/` and assign staff groups
 under *Settings → Groups*.
 
 ### 5. Fix the contact form addresses

@@ -18,4 +18,4 @@ spec:
     name: letsencrypt-cloudflare-prod
     kind: ClusterIssuer
   dnsNames:
-    - nubiup.duarte-correia.pt
+    - nubi.duarte-correia.pt

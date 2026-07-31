@@ -17,19 +17,19 @@ data:
 
   # Django rejects any Host header not listed here, so it must include every
   # hostname the gateway and tunnel terminate.
-  DJANGO_ALLOWED_HOSTS: "nubiup.duarte-correia.pt"
-  CSRF_TRUSTED_ORIGINS: "https://nubiup.duarte-correia.pt"
+  DJANGO_ALLOWED_HOSTS: "nubi.duarte-correia.pt"
+  CSRF_TRUSTED_ORIGINS: "https://nubi.duarte-correia.pt"
 
   # Absolute URL used to build links inside outgoing email (unsubscribe, confirm,
   # the email logo). apps/newsletter/url_utils.py refuses to send over real SMTP
   # while this points at localhost, so it must be the public origin.
-  PUBLIC_SITE_URL: "https://nubiup.duarte-correia.pt"
-  WAGTAIL_BASE_URL: "https://nubiup.duarte-correia.pt"
+  PUBLIC_SITE_URL: "https://nubi.duarte-correia.pt"
+  WAGTAIL_BASE_URL: "https://nubi.duarte-correia.pt"
 
   # The Wagtail Site row, written by create_initial_pages on every deploy. Without
   # these it would reset to localhost:80 each sync and Wagtail would start building
   # localhost URLs in page.full_url and the sitemap.
-  WAGTAIL_SITE_HOSTNAME: "nubiup.duarte-correia.pt"
+  WAGTAIL_SITE_HOSTNAME: "nubi.duarte-correia.pt"
   WAGTAIL_SITE_PORT: "443"
 
   POSTGRES_DB: nubiup

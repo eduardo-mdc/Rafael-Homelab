@@ -9,7 +9,7 @@ spec:
     - name: https
       protocol: HTTPS
       port: 443
-      hostname: "nubiup.duarte-correia.pt"
+      hostname: "nubi.duarte-correia.pt"
       allowedRoutes:
         namespaces:
           from: Same
@@ -30,7 +30,7 @@ spec:
       namespace: rafael-homelab
       sectionName: https
   hostnames:
-    - "nubiup.duarte-correia.pt"
+    - "nubi.duarte-correia.pt"
   rules:
     # /media/ off the read-only nginx. More specific prefix, so it wins over the
     # catch-all below regardless of rule order (Gateway API matches longest prefix).

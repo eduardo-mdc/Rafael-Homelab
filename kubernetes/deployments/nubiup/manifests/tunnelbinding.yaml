@@ -19,7 +19,7 @@ metadata:
 subjects:
   - name: nubiup-web
     spec:
-      fqdn: nubiup.duarte-correia.pt
+      fqdn: nubi.duarte-correia.pt
       protocol: http
       http2Origin: true
       noTlsVerify: true
