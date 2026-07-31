@@ -1,0 +1,263 @@
+# The whole application, as one pod with three containers.
+#
+# WHY ONE POD. Web, the Celery worker and the media server all need the same two
+# filesystems (Wagtail media, and the document vault that web writes uploads to and
+# the worker writes generated certificates to). This cluster is RWO-only —
+# `iscsi-zfs` is the sole storage class and iSCSI cannot do ReadWriteMany — so the
+# volumes cannot be shared between pods. Containers in one pod share its volumes, so
+# this needs a single attachment, has no cross-node multi-attach to fail, and no pod
+# affinity to get subtly wrong. It is also the same topology the app was written for:
+# docker-compose.prod.yml runs these on one host sharing named volumes.
+#
+# CONSEQUENCE: one replica, and `Recreate` — the RWO volume cannot be attached to an
+# old and a new pod at once, so deploys have a short gap (roughly 20-40s) rather than
+# being seamless. That is the honest trade for a site of this size. Scaling past one
+# replica requires moving media + vault to object storage first (Garage is already in
+# the cluster) — see README.md.
+#
+# Static files are not here at all: collectstatic runs at image build and WhiteNoise
+# middleware serves /static/ from inside the container.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nubiup-media-nginx
+  namespace: rafael-homelab
+data:
+  default.conf: |
+    server {
+      listen 8080;
+      server_tokens off;
+
+      # Scoped to /media/ so a misrouted request cannot be used to walk the
+      # filesystem. The vault is not mounted into this container at all.
+      location /media/ {
+        alias /app/media/;
+        autoindex off;
+        # Wagtail renditions are content-addressed — the filename changes when the
+        # image does — so they are safe to cache hard.
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000";
+        add_header X-Content-Type-Options "nosniff" always;
+      }
+
+      location / {
+        return 404;
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nubiup-web
+  namespace: rafael-homelab
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nubiup-web
+  template:
+    metadata:
+      labels:
+        app: nubiup-web
+    spec:
+      # The image runs as appuser (uid/gid 1000) and the CSI mounts volumes
+      # root-owned, so without fsGroup the media and vault volumes are effectively
+      # read-only and the first upload fails with EACCES. This replaces compose's
+      # init_permissions chown service.
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+        # Schema + seed, before anything serves traffic.
+        #
+        # An initContainer rather than an Argo PreSync hook, because of how this
+        # cluster actually ships: argocd-image-updater is not installed, so a new
+        # image is picked up by `kubectl rollout restart` (imagePullPolicy: Always
+        # on a :latest tag), NOT by an Argo sync. A PreSync hook only fires on a
+        # sync — i.e. when a manifest changes in git — so a restart-driven deploy
+        # would start new code against an un-migrated schema. Here the ordering is
+        # structural: this must exit 0 before the app containers start, so
+        # `rollout restart` is a complete deploy on its own.
+        #
+        # No migration race to worry about: one replica, Recreate strategy, so
+        # exactly one of these ever runs at a time.
+        #
+        # Both commands are idempotent — migrate is a no-op once applied, and
+        # create_initial_pages skips pages that exist. It also calls setup_groups
+        # itself, which is why the five staff groups aren't seeded separately.
+        - name: migrate
+          image: hydrodog11/biohub-up:latest
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -lc
+            - |
+              set -e
+              python manage.py migrate --noinput
+              python manage.py create_initial_pages
+          envFrom:
+            - configMapRef:
+                name: nubiup-env
+            - secretRef:
+                name: nubiup-app-secret
+            - secretRef:
+                name: nubiup-db-secret
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+              ephemeral-storage: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+              ephemeral-storage: 512Mi
+      containers:
+        # ── Django / ASGI ──────────────────────────────────────────────────────
+        # Daphne rather than a WSGI server: the staff SPA's notification websocket
+        # runs through Channels in this same process (apps/comms/consumers.py).
+        - name: web
+          image: hydrodog11/biohub-up:latest
+          imagePullPolicy: Always
+          # Image CMD: daphne -b $APP_HOST -p $APP_PORT config.asgi:application
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: nubiup-env
+            - secretRef:
+                name: nubiup-app-secret
+            - secretRef:
+                name: nubiup-db-secret
+          volumeMounts:
+            - name: media
+              mountPath: /app/media
+            - name: vault
+              mountPath: /app/vault_files
+          # TCP, not HTTP: ALLOWED_HOSTS rejects the pod-IP Host header kubelet
+          # would send, so an HTTP probe would fail a healthy pod.
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 45
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+              ephemeral-storage: 256Mi
+            limits:
+              cpu: 1000m
+              # Headroom for WeasyPrint: a certificate preview renders a PDF inside
+              # the request (certificates/api/views.py), and Pango/Cairo allocate
+              # well above idle. Idle is ~200Mi.
+              memory: 1Gi
+              ephemeral-storage: 1Gi
+
+        # ── Celery worker ──────────────────────────────────────────────────────
+        # Newsletter dispatch, certificate PDF generation, contact-form mail,
+        # Drive sync. Same image, different entrypoint.
+        - name: worker
+          image: hydrodog11/biohub-up:latest
+          imagePullPolicy: Always
+          command: ["sh", "-lc", "exec celery -A config worker -l info --concurrency 2"]
+          envFrom:
+            - configMapRef:
+                name: nubiup-env
+            - secretRef:
+                name: nubiup-app-secret
+            - secretRef:
+                name: nubiup-db-secret
+          volumeMounts:
+            # Read: newsletter attachments composed into outgoing mail.
+            - name: media
+              mountPath: /app/media
+            # WRITE: every generated certificate PDF lands here, and web streams it
+            # back out on download. Same volume, by design.
+            - name: vault
+              mountPath: /app/vault_files
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+              ephemeral-storage: 256Mi
+            limits:
+              cpu: 1000m
+              # WeasyPrint again, and here in a batch: a campaign renders one PDF
+              # per recipient, two in flight at concurrency 2.
+              memory: 1536Mi
+              ephemeral-storage: 1Gi
+
+        # ── Media server ───────────────────────────────────────────────────────
+        # Serves /media/ off the volume. Read-only, and the vault is deliberately
+        # absent — do not add it.
+        - name: media
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d
+              readOnly: true
+            - name: media
+              mountPath: /app/media
+              readOnly: true
+          # TCP, not HTTP: every path here answers 404 (catch-all) or 403 (/media/
+          # with autoindex off), and httpGet counts only 2xx/3xx as success.
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+              ephemeral-storage: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+              ephemeral-storage: 256Mi
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: nubiup-media
+        - name: vault
+          persistentVolumeClaim:
+            claimName: nubiup-vault
+        - name: nginx-config
+          configMap:
+            name: nubiup-media-nginx
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nubiup-web
+  namespace: rafael-homelab
+spec:
+  selector:
+    app: nubiup-web
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+# Same pod, the nginx container's port. Split out as its own Service so the
+# HTTPRoute can send /media/ here without going through Django.
+apiVersion: v1
+kind: Service
+metadata:
+  name: nubiup-media
+  namespace: rafael-homelab
+spec:
+  selector:
+    app: nubiup-web
+  ports:
+    - port: 80
+      targetPort: 8080
