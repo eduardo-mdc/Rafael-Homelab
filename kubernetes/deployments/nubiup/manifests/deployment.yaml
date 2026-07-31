@@ -66,6 +66,21 @@ spec:
       # root-owned, so without fsGroup the media and vault volumes are effectively
       # read-only and the first upload fails with EACCES. This replaces compose's
       # init_permissions chown service.
+      # hydrodog11/biohub-up is not anonymously pullable, unlike the other images
+      # in this cluster. The source repo (nubiup/website_nubiup) is private, and the
+      # image contains the whole source tree, so it stays credentialed.
+      #
+      # Docker Hub is also in an odd state for this repo: the registry serves the
+      # image with credentials, but Hub never created a repository *record* for it —
+      # it 404s in the Hub API and does not appear in the account's repository list,
+      # which means its visibility cannot be flipped through the UI or API. A pull
+      # secret sidesteps that entirely.
+      #
+      # The secret is currently created out-of-band (see README.md, "Image pull
+      # credentials") rather than from Bitwarden, so it survives a namespace
+      # recreation only if recreated. Moving it to an ExternalSecret is the follow-up.
+      imagePullSecrets:
+        - name: nubiup-dockerhub
       securityContext:
         fsGroup: 1000
       initContainers:

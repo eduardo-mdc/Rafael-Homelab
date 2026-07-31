@@ -25,6 +25,9 @@ spec:
       labels:
         app: nubiup-beat
     spec:
+      # See the note in deployment.yaml — the image requires credentials.
+      imagePullSecrets:
+        - name: nubiup-dockerhub
       securityContext:
         fsGroup: 1000
       containers:
