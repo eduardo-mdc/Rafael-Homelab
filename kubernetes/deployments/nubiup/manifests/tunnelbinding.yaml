@@ -1,0 +1,29 @@
+# Public access over the shared Cloudflare tunnel.
+#
+# Points at the web Service directly rather than at the gateway, matching the other
+# apps here. Note the consequence: requests arriving over the tunnel do NOT pass
+# through the HTTPRoute, so the /media/ split in gateway.yaml does not apply to
+# them — Django serves /media/ itself for tunnel traffic. That works because
+# MEDIA_URL is a normal Django URL, it is simply less efficient than nginx. On the
+# LAN, Pi-hole resolves the same hostname to the cluster ingress and traffic does go
+# through the gateway.
+#
+# Everything sensitive behind this is authenticated: /cms/ is Wagtail login, /staff/
+# and /api/v2/staff/ are gated by StaffRequiredMixin and DRF permission classes, and
+# django-axes rate-limits the login itself.
+apiVersion: networking.cfargotunnel.com/v1alpha1
+kind: TunnelBinding
+metadata:
+  name: nubiup
+  namespace: rafael-homelab
+subjects:
+  - name: nubiup-web
+    spec:
+      fqdn: nubiup.duarte-correia.pt
+      protocol: http
+      http2Origin: true
+      noTlsVerify: true
+      target: http://nubiup-web.rafael-homelab.svc.cluster.local:8000
+tunnelRef:
+  kind: ClusterTunnel
+  name: porto-cluster-tunnel

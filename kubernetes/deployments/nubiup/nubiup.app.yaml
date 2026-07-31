@@ -1,0 +1,45 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nubiup
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    # NOTE: argocd-image-updater is not currently installed in this cluster, so
+    # these annotations are inert — exactly as they are on portfolio, cladewright
+    # and palworld. They are kept so this app behaves like the others the day it
+    # IS installed. Until then a new image is rolled out by hand:
+    #
+    #   kubectl -n rafael-homelab rollout restart deploy/nubiup-web deploy/nubiup-beat
+    #
+    # That is a complete deploy on its own: imagePullPolicy: Always re-pulls
+    # :latest, and the web pod's migrate initContainer applies migrations before
+    # anything serves. See README.md.
+    #
+    # One image for all workloads (web, worker, beat) — same Django project,
+    # different entrypoints. Digest strategy: `latest` is the channel CI publishes
+    # to, and the digest is the real version.
+    argocd-image-updater.argoproj.io/image-list: web=hydrodog11/biohub-up
+    argocd-image-updater.argoproj.io/web.update-strategy: digest
+    argocd-image-updater.argoproj.io/web.tag-filter: latest
+    argocd-image-updater.argoproj.io/write-back-method: git
+    argocd-image-updater.argoproj.io/git-branch: main
+spec:
+  project: rafael-homelab
+  source:
+    repoURL: git@github.com:eduardo-mdc/Rafael-Homelab.git
+    targetRevision: HEAD
+    path: kubernetes/deployments/nubiup/manifests
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rafael-homelab
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true

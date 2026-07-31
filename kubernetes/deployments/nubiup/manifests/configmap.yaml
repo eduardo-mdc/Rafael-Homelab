@@ -1,0 +1,46 @@
+# Non-secret environment shared by web, worker, beat and the migrate job. Kept in
+# one place because a mismatch between them is a silent bug: the worker rendering
+# email links off a different PUBLIC_SITE_URL than the web pod, for example.
+#
+# THE HOSTNAME APPEARS HERE AND IN THREE OTHER FILES (gateway, certificate,
+# tunnelbinding). When the real domain is bought, see README.md — it lists every
+# place that has to change together.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nubiup-env
+  namespace: rafael-homelab
+data:
+  DJANGO_SETTINGS_MODULE: config.settings.prod
+  APP_HOST: "0.0.0.0"
+  APP_PORT: "8000"
+
+  # Django rejects any Host header not listed here, so it must include every
+  # hostname the gateway and tunnel terminate.
+  DJANGO_ALLOWED_HOSTS: "nubiup.duarte-correia.pt"
+  CSRF_TRUSTED_ORIGINS: "https://nubiup.duarte-correia.pt"
+
+  # Absolute URL used to build links inside outgoing email (unsubscribe, confirm,
+  # the email logo). apps/newsletter/url_utils.py refuses to send over real SMTP
+  # while this points at localhost, so it must be the public origin.
+  PUBLIC_SITE_URL: "https://nubiup.duarte-correia.pt"
+  WAGTAIL_BASE_URL: "https://nubiup.duarte-correia.pt"
+
+  # The Wagtail Site row, written by create_initial_pages on every deploy. Without
+  # these it would reset to localhost:80 each sync and Wagtail would start building
+  # localhost URLs in page.full_url and the sitemap.
+  WAGTAIL_SITE_HOSTNAME: "nubiup.duarte-correia.pt"
+  WAGTAIL_SITE_PORT: "443"
+
+  POSTGRES_DB: nubiup
+  POSTGRES_HOST: nubiup-postgres-rw
+  POSTGRES_PORT: "5432"
+
+  # One Redis, three isolated logical DBs — same split as docker-compose.prod.yml.
+  CELERY_BROKER_URL: "redis://nubiup-redis:6379/0"
+  CELERY_RESULT_BACKEND: "redis://nubiup-redis:6379/1"
+  CHANNELS_REDIS_URL: "redis://nubiup-redis:6379/2"
+
+  # EMAIL_HOST is deliberately unset: config/settings/base.py selects the SMTP
+  # backend only when it is present, so mail goes to the pod log until there is a
+  # real mailbox on the real domain. Nothing else is gated on it.

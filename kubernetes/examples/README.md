@@ -10,7 +10,7 @@ Reference manifests for common patterns used in this homelab. None of these are 
 | `tunnel-binding.yaml` | Cloudflare Tunnel binding on the shared cluster tunnel |
 | `external-secret.yaml` | Pulling secrets from Bitwarden, with and without value templating |
 | `postgres-cluster.yaml` | CloudNativePG 3-node HA cluster with WAL archiving + scheduled S3 backup |
-| `pvc.yaml` | Persistent volume claim (Longhorn) |
+| `pvc.yaml` | Persistent volume claim (`iscsi-zfs` — **RWO only**, this cluster has no ReadWriteMany) |
 
 ---
 

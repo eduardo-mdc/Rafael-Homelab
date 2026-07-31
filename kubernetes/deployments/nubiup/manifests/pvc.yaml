@@ -1,0 +1,75 @@
+# All three claims are ReadWriteOnce because that is all this cluster can do:
+# `iscsi-zfs` (democratic-csi, iSCSI) is the only storage class, iSCSI is block
+# storage, and every one of the ~46 PVCs in the cluster is RWO. There is no
+# Longhorn here despite what kubernetes/examples/pvc.yaml still says.
+#
+# That constraint drives the whole topology: web, the Celery worker and the media
+# server all need the same two filesystems, so they run as three containers in ONE
+# pod (see deployment.yaml) rather than three Deployments. Containers in a pod share
+# its volumes, so a single RWO attachment is all that is required — and there is no
+# cross-node multi-attach to fail, and no pod affinity to get wrong.
+#
+# The upgrade path, when it matters, is object storage: the cluster already runs
+# Garage (namespace `garage-host`), so media and vault could move to django-storages
+# against S3, after which web could scale past one replica. That is an application
+# change, not a manifest change — see README.md.
+
+# Wagtail media — CMS image/document uploads and their generated renditions.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nubiup-media
+  namespace: rafael-homelab
+  labels:
+    app.kubernetes.io/name: nubiup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+# The document vault (VAULT_STORAGE_ROOT = /app/vault_files).
+#
+# Written by BOTH the web container (staff uploads) and the worker container
+# (generate_certificate saves each rendered PDF here — apps/certificates/tasks.py),
+# and read back by web to stream downloads. Sharing it is not optional: with
+# per-container storage a certificate generates successfully and then 404s on
+# download, which is exactly what docker-compose.prod.yml did before this work,
+# because it mounted no volume here at all.
+#
+# Never mounted into the media server. These files have no public URL by design —
+# PrivateFileSystemStorage.url() raises, and every read goes through an
+# authenticated Django view with `Cache-Control: private, no-store`.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nubiup-vault
+  namespace: rafael-homelab
+  labels:
+    app.kubernetes.io/name: nubiup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+# Celery beat's schedule file (/app/beat/celerybeat-schedule, a shelve DB).
+# Its own claim because beat is its own pod — it must stay a single replica for
+# correctness (see beat-deployment.yaml) and does not touch media or the vault.
+# Losing this volume is harmless: beat rebuilds it from CELERY_BEAT_SCHEDULE. It
+# exists so a restart doesn't re-fire everything beat thinks it missed.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nubiup-beat
+  namespace: rafael-homelab
+  labels:
+    app.kubernetes.io/name: nubiup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

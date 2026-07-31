@@ -1,6 +1,13 @@
-# PersistentVolumeClaim — Longhorn (default StorageClass)
+# PersistentVolumeClaim — iscsi-zfs (democratic-csi, the default and only StorageClass)
 # Use for app data that must survive pod restarts.
-# ReadWriteOnce = single node; use ReadWriteMany only if multiple pods need concurrent access.
+#
+# ReadWriteOnce is the ONLY option. iSCSI is block storage, so a volume attaches to
+# one node at a time — there is no ReadWriteMany in this cluster, and no CSI driver
+# that offers it. An RWX claim will simply never bind.
+#
+# If several workloads need the same filesystem, they have to be containers in the
+# same pod (pods share their volumes) — see deployments/nubiup for a worked example.
+# The alternative is object storage: Garage runs in the `garage-host` namespace.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

@@ -1,0 +1,24 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: nubiup-postgres
+  namespace: rafael-homelab
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.2
+
+  storage:
+    # Wagtail page revisions accumulate, and every certificate/newsletter send
+    # writes a log row. 5Gi matches the other apps and is ample for the content
+    # volume of a student organisation.
+    size: 5Gi
+
+  bootstrap:
+    initdb:
+      database: nubiup
+      owner: nubiup
+      secret:
+        name: nubiup-db-secret
+
+  superuserSecret:
+    name: nubiup-db-secret

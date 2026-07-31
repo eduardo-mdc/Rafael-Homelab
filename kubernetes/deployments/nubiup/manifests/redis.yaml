@@ -1,0 +1,54 @@
+# Serves three roles on separate logical DBs, matching docker-compose.prod.yml:
+#   /0 Celery broker   /1 Celery results   /2 Channels layer (notification websocket)
+#
+# Persistence is off. The broker holds newsletter/certificate sends in flight; a
+# restart loses a queued task, which is recoverable from the staff UI (re-queue the
+# campaign, re-issue the batch). Snapshotting to /data would put RDB files on node
+# ephemeral-storage and contribute to DiskPressure for no real gain.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nubiup-redis
+  namespace: rafael-homelab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nubiup-redis
+  template:
+    metadata:
+      labels:
+        app: nubiup-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["redis-server", "--save", "", "--appendonly", "no"]
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+              ephemeral-storage: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+              ephemeral-storage: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nubiup-redis
+  namespace: rafael-homelab
+spec:
+  selector:
+    app: nubiup-redis
+  ports:
+    - port: 6379
+      targetPort: 6379

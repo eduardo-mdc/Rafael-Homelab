@@ -1,0 +1,60 @@
+# Celery beat — the scheduler. Two periodic tasks: the newsletter auto-dispatch
+# sweep, and the staff task auto-archive that used to (wrongly) run inside a GET.
+#
+# Its own pod rather than a fourth container in the app pod, because it is the one
+# workload whose replica count is a correctness constraint rather than a capacity
+# choice, and it needs no access to media or the vault.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nubiup-beat
+  namespace: rafael-homelab
+spec:
+  # Exactly one, always. A second beat double-fires every scheduled task —
+  # including newsletter dispatch, i.e. duplicate email to real subscribers.
+  replicas: 1
+  strategy:
+    # RWO schedule volume: a rolling update would deadlock the new pod waiting for
+    # a volume the old one still holds.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nubiup-beat
+  template:
+    metadata:
+      labels:
+        app: nubiup-beat
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: beat
+          image: hydrodog11/biohub-up:latest
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -lc
+            - "exec celery -A config beat -l info -s /app/beat/celerybeat-schedule"
+          envFrom:
+            - configMapRef:
+                name: nubiup-env
+            - secretRef:
+                name: nubiup-app-secret
+            - secretRef:
+                name: nubiup-db-secret
+          volumeMounts:
+            - name: beat
+              mountPath: /app/beat
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+              ephemeral-storage: 128Mi
+            limits:
+              cpu: 200m
+              memory: 384Mi
+              ephemeral-storage: 512Mi
+      volumes:
+        - name: beat
+          persistentVolumeClaim:
+            claimName: nubiup-beat

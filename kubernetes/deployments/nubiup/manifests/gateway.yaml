@@ -1,0 +1,89 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: nubiup-gateway
+  namespace: rafael-homelab
+spec:
+  gatewayClassName: envoy
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: "nubiup.duarte-correia.pt"
+      allowedRoutes:
+        namespaces:
+          from: Same
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: nubiup-tls-cert
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: nubiup-http
+  namespace: rafael-homelab
+spec:
+  parentRefs:
+    - name: nubiup-gateway
+      namespace: rafael-homelab
+      sectionName: https
+  hostnames:
+    - "nubiup.duarte-correia.pt"
+  rules:
+    # /media/ off the read-only nginx. More specific prefix, so it wins over the
+    # catch-all below regardless of rule order (Gateway API matches longest prefix).
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /media/
+      backendRefs:
+        - name: nubiup-media
+          port: 80
+    # Everything else is Django: the public bilingual site, /cms/, /staff/ (the SPA
+    # shell + its /static/ bundle via WhiteNoise), /api/v2/staff/, and the
+    # ws/notifications/ websocket.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: nubiup-web
+          port: 8000
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: nubiup-backend-policy
+  namespace: rafael-homelab
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: nubiup-http
+  timeout:
+    http:
+      # The staff SPA holds a notification websocket open for as long as someone
+      # has the tab open — a work tool, so that is a whole working day. A default
+      # idle cap would drop it repeatedly; the client treats an unexpected close as
+      # a reconnect, so the symptom would be churn rather than an obvious failure.
+      connectionIdleTimeout: 3600s
+      maxConnectionDuration: 3600s
+      # Ordinary requests stay bounded. 120s rather than the default because a
+      # certificate preview renders a PDF with WeasyPrint inside the request.
+      requestTimeout: 120s
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: nubiup-client-policy
+  namespace: rafael-homelab
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: nubiup-gateway
+  timeout:
+    http:
+      idleTimeout: 3600s

@@ -6,3 +6,4 @@ resources:
   - umami/umami.app.yaml
   - cladewright/cladewright.app.yaml
   - palworld/palworld.app.yaml
+  - nubiup/nubiup.app.yaml

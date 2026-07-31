@@ -1,0 +1,21 @@
+# TLS for the gateway listener, via cert-manager (Let's Encrypt + Cloudflare DNS-01).
+#
+# This is also what makes the app's HSTS header safe: config/settings/prod.py sets
+# SECURE_HSTS_SECONDS to a year, so the first successful load pins HTTPS in every
+# visitor's browser. That is correct here because TLS is terminated at the gateway
+# with a real certificate — but it is the reason the hostname below and the one in
+# gateway.yaml must never disagree, and the reason not to point this at a domain
+# that isn't owned yet (DNS-01 would fail and retry forever, and the listener would
+# serve no cert at all).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: nubiup-tls-cert
+  namespace: rafael-homelab
+spec:
+  secretName: nubiup-tls-cert
+  issuerRef:
+    name: letsencrypt-cloudflare-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - nubiup.duarte-correia.pt
