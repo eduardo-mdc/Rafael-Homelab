@@ -1,0 +1,89 @@
+# Who may talk to Nubi UP's datastores.
+#
+# THE NAMESPACE IS SHARED. `rafael-homelab` also runs portfolio, umami,
+# cladewright, hello-world-nginx and palworld, and before this file there was not
+# a single NetworkPolicy anywhere in the cluster — so every pod in it could open a
+# socket to nubiup-redis and nubiup-postgres. A game server is exactly the
+# workload that gets compromised, and it sat one `redis-cli` away from the Celery
+# broker.
+#
+# SCOPED BY podSelector, NOT a namespace default-deny. A default-deny here would
+# cut off the neighbours too, which is someone else's outage caused by our
+# hardening. These select only our own pods; everything else in the namespace is
+# untouched and keeps its current (unrestricted) behaviour.
+#
+# NetworkPolicy is ADDITIVE across policies and default-allow in its absence: the
+# moment a pod is selected by any policy, only what is explicitly allowed gets
+# through. So each policy below must list every legitimate source or it becomes an
+# outage.
+#
+# VERIFY on first sync — neither could be checked against the cluster when this
+# was written (the kubeconfig had expired):
+#   1. The CNI actually enforces NetworkPolicy. Several do not by default; if
+#      this cluster's does not, these files are documentation and Redis's
+#      --requirepass is the control that is really holding.
+#   2. The CNPG pod labels and operator namespace below match reality:
+#        kubectl -n rafael-homelab get pods --show-labels | grep postgres
+#        kubectl get ns | grep -i cnpg
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nubiup-redis-ingress
+  namespace: rafael-homelab
+spec:
+  podSelector:
+    matchLabels:
+      app: nubiup-redis
+  policyTypes:
+    - Ingress
+  ingress:
+    # web + worker (one pod, app: nubiup-web) and beat. Not nubiup-next: the
+    # public site holds no Celery, no Channels and no cache client — see the note
+    # in next-deployment.yaml about why it gets none of this environment.
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - nubiup-web
+                  - nubiup-beat
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nubiup-postgres-ingress
+  namespace: rafael-homelab
+spec:
+  podSelector:
+    matchLabels:
+      # CNPG's standard label on every instance of a Cluster.
+      cnpg.io/cluster: nubiup-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # The application, including the migrate initContainer.
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - nubiup-web
+                  - nubiup-beat
+        # The instances themselves. THREE of them — streaming replication is
+        # pod-to-pod, so omitting this breaks the cluster rather than securing it.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: nubiup-postgres
+        # The operator: failover, switchover, backups, `kubectl cnpg psql`.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+      ports:
+        - protocol: TCP
+          port: 5432

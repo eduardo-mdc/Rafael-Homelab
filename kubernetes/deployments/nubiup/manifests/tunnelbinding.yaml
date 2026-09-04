@@ -1,16 +1,43 @@
 # Public access over the shared Cloudflare tunnel.
 #
-# Points at the web Service directly rather than at the gateway, matching the other
-# apps here. Note the consequence: requests arriving over the tunnel do NOT pass
-# through the HTTPRoute, so the /media/ split in gateway.yaml does not apply to
-# them — Django serves /media/ itself for tunnel traffic. That works because
-# MEDIA_URL is a normal Django URL, it is simply less efficient than nginx. On the
-# LAN, Pi-hole resolves the same hostname to the cluster ingress and traffic does go
-# through the gateway.
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │ ACTION REQUIRED ON FIRST DEPLOY — the target below is a placeholder.      │
+# └──────────────────────────────────────────────────────────────────────────┘
 #
-# Everything sensitive behind this is authenticated: /cms/ is Wagtail login, /staff/
-# and /api/v2/staff/ are gated by StaffRequiredMixin and DRF permission classes, and
-# django-axes rate-limits the login itself.
+# WHY THIS CHANGED. This used to point straight at `nubiup-web:8000`, and that
+# was correct while Django rendered the public site. It no longer does: a Next
+# server (nubiup-next) renders every public page, and which backend serves a
+# given path is decided by the HTTPRoute in gateway.yaml.
+#
+# Tunnel traffic does NOT pass through the HTTPRoute. It goes wherever this
+# points, directly. So pointing it at Django again would mean every public page
+# arriving over the tunnel is answered by a Django that has no template for it —
+# and the tunnel is how the PUBLIC reaches this site. (On the LAN, Pi-hole
+# resolves the same hostname to the cluster ingress, which does go through the
+# gateway, so the two paths would disagree — the site would look fine from the
+# office and be broken from outside.)
+#
+# The fix is to send tunnel traffic through the gateway as well, so both paths
+# share one routing table. That means targeting the Service Envoy Gateway
+# provisions for nubiup-gateway. Its name is deterministic but carries a hash,
+# so it has to be read out of the cluster once:
+#
+#   kubectl -n envoy-gateway-system get svc \
+#     -l gateway.envoyproxy.io/owning-gateway-name=nubiup-gateway
+#
+# Take the name from that and set it below, as:
+#
+#   target: https://<svc>.envoy-gateway-system.svc.cluster.local:443
+#
+# Port 443 with `noTlsVerify: true`, because the gateway listener terminates TLS
+# with the Let's Encrypt certificate for the public hostname and this hop
+# addresses it by its internal name — the certificate will not match, and that
+# is expected on a hop that never leaves the cluster.
+#
+# Everything sensitive behind this is authenticated regardless of which backend
+# answers: /cms/ is Wagtail login, /staff/ and /api/v2/staff/ are gated by
+# StaffRequiredMixin and DRF permission classes, and django-axes rate-limits the
+# login itself.
 apiVersion: networking.cfargotunnel.com/v1alpha1
 kind: TunnelBinding
 metadata:
@@ -20,10 +47,17 @@ subjects:
   - name: nubiup-web
     spec:
       fqdn: nubi.duarte-correia.pt
-      protocol: http
+      protocol: https
       http2Origin: true
+      # The internal hop addresses the gateway by its cluster name, which the
+      # public certificate does not cover. See above.
       noTlsVerify: true
-      target: http://nubiup-web.rafael-homelab.svc.cluster.local:8000
+      # PLACEHOLDER — replace with the Envoy Service for nubiup-gateway, using
+      # the kubectl command in the comment above. Left obviously wrong on
+      # purpose: a name that does not resolve fails loudly at deploy, whereas
+      # quietly pointing this back at nubiup-web:8000 would serve a subtly
+      # broken public site to everyone outside the LAN.
+      target: https://REPLACE-ME-envoy-rafael-homelab-nubiup-gateway-XXXXXXXX.envoy-gateway-system.svc.cluster.local:443
 tunnelRef:
   kind: ClusterTunnel
   name: porto-cluster-tunnel

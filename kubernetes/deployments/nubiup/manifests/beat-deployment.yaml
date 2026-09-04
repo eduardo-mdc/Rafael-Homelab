@@ -45,6 +45,11 @@ spec:
                 name: nubiup-app-secret
             - secretRef:
                 name: nubiup-db-secret
+            # AFTER the ConfigMap, deliberately: later envFrom entries win, so a
+            # key that ever reappears in the ConfigMap cannot shadow the
+            # credentialed URL. Carries the four redis:// URLs.
+            - secretRef:
+                name: nubiup-redis-secret
           volumeMounts:
             - name: beat
               mountPath: /app/beat
@@ -57,6 +62,18 @@ spec:
               cpu: 200m
               memory: 384Mi
               ephemeral-storage: 512Mi
+          # Same image, same uid 1000 as the web and worker containers — see the
+          # note in deployment.yaml. fsGroup above is what makes the RWO schedule
+          # volume writable by it.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
       volumes:
         - name: beat
           persistentVolumeClaim:

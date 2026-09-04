@@ -23,12 +23,42 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
-          args: ["redis-server", "--save", "", "--appendonly", "no"]
+          # AUTHENTICATED. This namespace is shared with portfolio, umami,
+          # cladewright, hello-world-nginx and palworld, and there were no
+          # NetworkPolicies in the cluster at all — so every pod in it could
+          # reach this on 6379 with no credential. That is not theoretical
+          # exposure: DB 0 is the Celery broker, and write access to a broker is
+          # the ability to enqueue any registered task with any arguments (send
+          # mail as us, drive certificate generation). DB 3 is the Django cache,
+          # which holds unpublished page drafts.
+          #
+          # networkpolicy.yaml is the other half. This is the half that still
+          # holds if a selector there is wrong.
+          args:
+            - redis-server
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+            - --requirepass
+            - $(REDIS_PASSWORD)
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nubiup-redis-secret
+                  key: password
           ports:
             - containerPort: 6379
           readinessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              # -a, because `redis-cli ping` against a password-protected server
+              # answers NOAUTH and the probe fails against a perfectly healthy
+              # pod. --no-auth-warning keeps the credential out of the log line.
+              command:
+                - sh
+                - -c
+                - redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
@@ -40,6 +70,20 @@ spec:
               cpu: 200m
               memory: 256Mi
               ephemeral-storage: 512Mi
+          # uid 999 is the `redis` user the official image ships. Nothing is
+          # mounted here — persistence is off, by the note at the top of this
+          # file — so there are no volume permissions to satisfy and the root
+          # filesystem can be read-only.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
 ---
 apiVersion: v1
 kind: Service

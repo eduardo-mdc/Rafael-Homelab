@@ -1,0 +1,159 @@
+# The public site — a Next server rendering against Django's content API.
+#
+# Every public page comes from here. Django serves /cms/, /staff/, /api/v2/ and
+# /media/, and nothing else: see the HTTPRoute in gateway.yaml for the split.
+#
+# ITS OWN DEPLOYMENT, not a fourth container in the app pod. The app pod is
+# pinned to one replica and `Recreate` because it holds RWO volumes (see
+# deployment.yaml). This mounts NOTHING — no media, no vault, no schedule file —
+# so none of that applies: it rolls, it scales, and a deploy of the public site
+# has no gap. That is the one clear operational win from splitting the images.
+#
+# It is a SEPARATE IMAGE from Django: hydrodog11/biohub-up-web, built from
+# web/Dockerfile in the app repo. The two are published from the same commit and
+# tagged with the same SHA, and must be restarted together — a public site that
+# expects an API field the deployed Django does not serve renders broken pages.
+# See the app repo's docs/deploy.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nubiup-next
+  namespace: rafael-homelab
+spec:
+  # Two, because it can be. No volumes means no multi-attach and no
+  # single-writer constraint, and a rolling update genuinely rolls: the public
+  # site stays up across a deploy even though Django's pod does not.
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: nubiup-next
+  template:
+    metadata:
+      labels:
+        app: nubiup-next
+    spec:
+      # Same registry credentials as the Django image — see deployment.yaml.
+      imagePullSecrets:
+        - name: nubiup-dockerhub
+      containers:
+        - name: next
+          image: hydrodog11/biohub-up-web:latest
+          imagePullPolicy: Always
+          # Image CMD: node server.js
+          ports:
+            - containerPort: 3000
+          env:
+            # Where Django is, in-cluster. The image's own default is
+            # http://web:8000 — the docker-compose service name, which resolves
+            # to nothing here. Unset, every page 500s.
+            #
+            # Plain HTTP and the internal Service: this hop never leaves the
+            # cluster, and pointing it at the public hostname would send every
+            # server-side render out through the tunnel and back.
+            - name: DJANGO_API_URL
+              value: "http://nubiup-web.rafael-homelab.svc.cluster.local:8000"
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3000"
+            - name: HOSTNAME
+              value: "0.0.0.0"
+            - name: NEXT_TELEMETRY_DISABLED
+              value: "1"
+          # Deliberately NOT envFrom the Django ConfigMap or its Secrets. This
+          # process needs none of it, and the database password has no business
+          # in the environment of an internet-facing Node server.
+          #
+          # It needs no PUBLIC_SITE_URL either: it learns the host from the
+          # request and forwards that Host header to Django, which is what makes
+          # Wagtail's site resolution work.
+
+          # Readiness renders a REAL PAGE, not a TCP check and not /healthz/. A
+          # Next server that cannot reach Django still accepts connections and
+          # answers 500 for everything, so only an actual render proves it can
+          # serve — and a pod that cannot serve should leave the Service.
+          #
+          # The Host header is required, and is forwarded to Django: Wagtail
+          # resolves the site from it, and Django's ALLOWED_HOSTS rejects the pod
+          # IP kubelet would otherwise send. Without it this fails against a
+          # perfectly healthy pod.
+          #
+          # failureThreshold 6 (= 60s), not 3. Django's pod is single-replica on
+          # an RWO volume and redeploys with `Recreate`, so it is genuinely gone
+          # for 20-40s on every deploy. At 30s this would flap every time Django
+          # shipped; at 60s a routine deploy passes under it and a real outage
+          # still takes the pods out.
+          readinessProbe:
+            httpGet:
+              path: /en/
+              port: 3000
+              httpHeaders:
+                - name: Host
+                  value: nubi.duarte-correia.pt
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+          # A DIFFERENT PATH from readiness, and that is the whole point.
+          #
+          # /healthz/ is a route handler in the Next app that touches nothing
+          # external (web/src/app/healthz/route.ts). Pointing liveness at /en/
+          # like readiness does would mean a Django outage restarts every Next
+          # pod — a restart that cannot fix Django and only delays recovery when
+          # it returns. Same split as Django's own /healthz vs /readyz.
+          #
+          # The trailing slash is required: next.config.ts sets
+          # trailingSlash: true, so /healthz is a 308 to /healthz/ and kubelet
+          # does not follow redirects.
+          livenessProbe:
+            httpGet:
+              path: /healthz/
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+              ephemeral-storage: 128Mi
+            limits:
+              cpu: 500m
+              # Next's server plus React's render. Idle is ~90Mi; the ceiling is
+              # for a burst of concurrent renders.
+              memory: 512Mi
+              ephemeral-storage: 512Mi
+          # The image already runs as the base image's `node` user at uid 1000
+          # (web/Dockerfile says why it reuses that rather than adding one), and
+          # this mounts nothing, so there are no volume permissions to satisfy.
+          #
+          # readOnlyRootFilesystem is safe to add here in a way it is not on the
+          # Django pod — Next writes only to its own cache under /app/.next — but
+          # it wants a smoke test first, because the failure mode is a 500 on
+          # every page rather than a crash.
+          # VERIFY: try readOnlyRootFilesystem with an emptyDir on /tmp.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nubiup-next
+  namespace: rafael-homelab
+spec:
+  selector:
+    app: nubiup-next
+  ports:
+    - port: 3000
+      targetPort: 3000

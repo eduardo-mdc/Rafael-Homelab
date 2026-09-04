@@ -20,5 +20,62 @@ spec:
       secret:
         name: nubiup-db-secret
 
-  superuserSecret:
-    name: nubiup-db-secret
+  # No superuser, and specifically NOT `superuserSecret: nubiup-db-secret`.
+  #
+  # That is what this said, and it made the credential Django carries in its
+  # environment — shared with the Celery worker, beat and the migrate
+  # initContainer — ALSO the `postgres` superuser password. Any leak of the app
+  # environment escalated from "one database" to the whole instance, for no gain:
+  # nothing here needs superuser, and `kubectl cnpg psql` reaches the cluster
+  # through the operator without one.
+  #
+  # false is CNPG's own default; it is stated explicitly so that deleting a line
+  # cannot silently re-enable it.
+  enableSuperuserAccess: false
+
+  # Point-in-time recovery to Garage, the S3 service already running in this
+  # cluster (namespace garage-host).
+  #
+  # THREE INSTANCES IS NOT A BACKUP. Replication survives a node dying; it
+  # faithfully replicates a bad migration, a dropped table, or a
+  # create_initial_pages regression to all three copies at once. This is the only
+  # thing here that can undo one.
+  #
+  # Plain HTTP to the endpoint is fine: the hop never leaves the cluster.
+  #
+  # VERIFY before trusting it: the bucket name and endpoint below were written
+  # without cluster access. Check the Garage service name and that the bucket
+  # exists, then take a manual `kubectl cnpg backup nubiup-postgres` and RESTORE
+  # it into a scratch cluster. A backup nobody has restored is a hypothesis.
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://porto-k8s-backup/cnpg/nubiup
+      endpointURL: http://garage.garage-host.svc.cluster.local:3900
+      s3Credentials:
+        accessKeyId:
+          name: nubiup-backup-s3-secret
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: nubiup-backup-s3-secret
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+      data:
+        compression: gzip
+    # 30 days of PITR. Wagtail page revisions and the newsletter/certificate logs
+    # are small; the cost of a longer window is storage nobody is short of.
+    retentionPolicy: "30d"
+---
+# Daily base backup. WAL archiving (above) runs continuously and is what makes
+# point-in-time recovery possible; this is the anchor those WAL files replay from.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: nubiup-postgres-backup
+  namespace: rafael-homelab
+spec:
+  # CNPG uses SIX-field cron (seconds first). 02:30 daily.
+  schedule: "0 30 2 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: nubiup-postgres

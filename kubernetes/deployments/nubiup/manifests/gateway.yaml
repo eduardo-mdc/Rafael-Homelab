@@ -31,9 +31,64 @@ spec:
       sectionName: https
   hostnames:
     - "nubi.duarte-correia.pt"
+  # THE PUBLIC SITE IS NOT DJANGO ANY MORE.
+  #
+  # Django serves the CMS, the staff SPA and the API; a Next server (nubiup-next)
+  # renders every public page against that API. These rules are the same split
+  # the app repo's nginx/default.conf makes for docker-compose, and the two must
+  # agree — that file is the readable reference for why each one exists.
+  #
+  # Rule ORDER is irrelevant here: Gateway API matches the LONGEST prefix, not
+  # the first listed. (nginx matches in file order, which is why the same split
+  # is written most-specific-first over there.) They are ordered most-specific
+  # first anyway, so the two files read the same way.
+  #
+  # Host header: preserved as sent, which is load-bearing rather than hygiene.
+  # nubiup-next forwards it to Django, and Wagtail resolves the site from it —
+  # when Site.find_for_request matches nothing the pages API answers with an
+  # EMPTY 200 rather than an error, so a rewritten Host renders a blank site that
+  # reads as a routing bug and is not one. Do not add a URLRewrite filter here.
   rules:
-    # /media/ off the read-only nginx. More specific prefix, so it wins over the
-    # catch-all below regardless of rule order (Gateway API matches longest prefix).
+    # ── Next ────────────────────────────────────────────────────────────────
+    # The public site's build output. Content-hashed and served with Next's own
+    # immutable cache headers, which are passed through untouched.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /_next/
+      backendRefs:
+        - name: nubiup-next
+          port: 3000
+
+    # Public form posts. The route handlers live in the Next app and proxy to
+    # Django server-side against an allow-list of four paths. This must be more
+    # specific than the catch-all, or every form post lands on a Django URL that
+    # does not exist. Note Django's own API stays at /api/v2/ and is NOT here.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/forms/
+      backendRefs:
+        - name: nubiup-next
+          port: 3000
+
+    # Every public page. Wagtail's locale trees keep the /en/ and /pt/ prefixes,
+    # so these two are the whole public site. The bare / is deliberately absent:
+    # it falls to Django below, which redirects to the visitor's language.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /en/
+        - path:
+            type: PathPrefix
+            value: /pt/
+      backendRefs:
+        - name: nubiup-next
+          port: 3000
+
+    # ── nginx ───────────────────────────────────────────────────────────────
+    # /media/ off the read-only nginx container in the app pod. Wagtail uploads
+    # and renditions only — the vault is deliberately not mounted there.
     - matches:
         - path:
             type: PathPrefix
@@ -41,9 +96,11 @@ spec:
       backendRefs:
         - name: nubiup-media
           port: 80
-    # Everything else is Django: the public bilingual site, /cms/, /staff/ (the SPA
-    # shell + its /static/ bundle via WhiteNoise), /api/v2/staff/, and the
-    # ws/notifications/ websocket.
+
+    # ── Django ──────────────────────────────────────────────────────────────
+    # Everything left: /cms/, /staff/ (the SPA shell and its /static/ bundle via
+    # WhiteNoise), /api/v2/, /documents/, /robots.txt, /healthz, the
+    # ws/notifications/ websocket, and the bare / language redirect.
     - matches:
         - path:
             type: PathPrefix

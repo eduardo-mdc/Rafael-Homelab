@@ -1,4 +1,8 @@
-# The whole application, as one pod with three containers.
+# Django and its Celery worker, as one pod with three containers.
+#
+# NOT the public site. That is a Next server in its own Deployment and its own
+# image — see next-deployment.yaml. Django here serves /cms/, /staff/, /api/v2/
+# and /documents/; gateway.yaml decides which of the two gets a given path.
 #
 # WHY ONE POD. Web, the Celery worker and the media server all need the same two
 # filesystems (Wagtail media, and the document vault that web writes uploads to and
@@ -83,6 +87,14 @@ spec:
         - name: nubiup-dockerhub
       securityContext:
         fsGroup: 1000
+      # Container hardening. The images ALREADY run as uid 1000 (appuser in the
+      # Django image, the base image's `node` in the Next one) — this only makes
+      # that a property the kubelet enforces rather than one the Dockerfile
+      # happens to have. readOnlyRootFilesystem is deliberately NOT set on the
+      # Django containers: WeasyPrint and fontconfig write to $HOME on every
+      # certificate render, which is why the image creates /home/appuser at all.
+      # Doing it properly means emptyDirs on /home/appuser and /tmp, and wants a
+      # test run rather than a blind change.
       initContainers:
         # Schema + seed, before anything serves traffic.
         #
@@ -118,6 +130,14 @@ spec:
                 name: nubiup-app-secret
             - secretRef:
                 name: nubiup-db-secret
+            # AFTER the ConfigMap, deliberately: later envFrom entries win, so a
+            # key that ever reappears in the ConfigMap cannot shadow the
+            # credentialed URL. Carries the four redis:// URLs.
+            # The migrate initContainer needs Redis (create_initial_pages warms
+            # the cache) but not Drive — the sync is a Celery task, not part of
+            # startup.
+            - secretRef:
+                name: nubiup-redis-secret
           resources:
             requests:
               cpu: 100m
@@ -127,6 +147,15 @@ spec:
               cpu: 1000m
               memory: 1Gi
               ephemeral-storage: 512Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
       containers:
         # ── Django / ASGI ──────────────────────────────────────────────────────
         # Daphne rather than a WSGI server: the staff SPA's notification websocket
@@ -144,22 +173,51 @@ spec:
                 name: nubiup-app-secret
             - secretRef:
                 name: nubiup-db-secret
+            # AFTER the ConfigMap, deliberately: later envFrom entries win, so a
+            # key that ever reappears in the ConfigMap cannot shadow the
+            # credentialed URL. Carries the four redis:// URLs.
+            - secretRef:
+                name: nubiup-redis-secret
+            - secretRef:
+                name: nubiup-drive-secret
           volumeMounts:
             - name: media
               mountPath: /app/media
             - name: vault
               mountPath: /app/vault_files
-          # TCP, not HTTP: ALLOWED_HOSTS rejects the pod-IP Host header kubelet
-          # would send, so an HTTP probe would fail a healthy pod.
+          # HTTP now, not TCP. The old comment was right about the cause and
+          # wrong about the cure: ALLOWED_HOSTS does reject the pod IP kubelet
+          # sends by default, but the fix is to send a real Host header, not to
+          # give up on asking the application anything. A TCP check passes on a
+          # Daphne that has lost its database and answers 500 to every request.
+          #
+          # Two different endpoints, deliberately — see the app repo's
+          # apps/core/health.py.
+          #
+          # readiness → /readyz, which round-trips Postgres and Redis and answers
+          # 503 when either is down. Failing pulls the pod out of the Service.
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /readyz
               port: 8000
+              httpHeaders:
+                - name: Host
+                  value: nubi.duarte-correia.pt
             initialDelaySeconds: 15
             periodSeconds: 10
             failureThreshold: 6
+          # liveness → /healthz, which touches NOTHING external. This must never
+          # be pointed at /readyz: a Postgres blip would then restart the pod,
+          # turning a recoverable dependency failure into a crash loop that
+          # outlives it — and with one replica and an RWO volume, that is the
+          # whole site down rather than degraded.
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /healthz
               port: 8000
+              httpHeaders:
+                - name: Host
+                  value: nubi.duarte-correia.pt
             initialDelaySeconds: 45
             periodSeconds: 15
             failureThreshold: 3
@@ -175,6 +233,15 @@ spec:
               # well above idle. Idle is ~200Mi.
               memory: 1Gi
               ephemeral-storage: 1Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
 
         # ── Celery worker ──────────────────────────────────────────────────────
         # Newsletter dispatch, certificate PDF generation, contact-form mail,
@@ -190,6 +257,13 @@ spec:
                 name: nubiup-app-secret
             - secretRef:
                 name: nubiup-db-secret
+            # AFTER the ConfigMap, deliberately: later envFrom entries win, so a
+            # key that ever reappears in the ConfigMap cannot shadow the
+            # credentialed URL. Carries the four redis:// URLs.
+            - secretRef:
+                name: nubiup-redis-secret
+            - secretRef:
+                name: nubiup-drive-secret
           volumeMounts:
             # Read: newsletter attachments composed into outgoing mail.
             - name: media
@@ -209,6 +283,15 @@ spec:
               # per recipient, two in flight at concurrency 2.
               memory: 1536Mi
               ephemeral-storage: 1Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
 
         # ── Media server ───────────────────────────────────────────────────────
         # Serves /media/ off the volume. Read-only, and the vault is deliberately
@@ -240,6 +323,23 @@ spec:
               cpu: 200m
               memory: 128Mi
               ephemeral-storage: 256Mi
+          # Weaker than the other three, and the reason is the image. Stock
+          # `nginx:alpine` starts its master process as root before dropping to
+          # the nginx user, and writes to /var/cache/nginx and /var/run, so
+          # runAsNonRoot would put it in CrashLoopBackOff. The fix is
+          # `nginxinc/nginx-unprivileged` (uid 101, already listening on 8080
+          # here) — a small change that must not be made blind, because this
+          # container is how every CMS image reaches the site.
+          #
+          # VERIFY: make that swap and lift this to the full context above, then
+          # confirm an image renders on a public page.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              # nginx binds 8080, so it needs no privileged port.
+            seccompProfile:
+              type: RuntimeDefault
       volumes:
         - name: media
           persistentVolumeClaim:

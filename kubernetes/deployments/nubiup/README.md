@@ -14,12 +14,36 @@ domain](#moving-to-the-real-domain).
 | Workload | What it is |
 |---|---|
 | `nubiup-web` (pod, 3 containers) | `web` Daphne/ASGI · `worker` Celery · `media` nginx serving `/media/`. Plus a `migrate` initContainer |
+| `nubiup-next` | The **public site** — a Next server, 2 replicas, rolling updates |
 | `nubiup-beat` | Celery beat — the scheduler, exactly one replica |
 | `nubiup-postgres` | CloudNativePG, 3 instances |
-| `nubiup-redis` | Celery broker `/0`, results `/1`, Channels layer `/2` |
+| `nubiup-redis` | Celery broker `/0`, results `/1`, Channels `/2`, Django cache `/3` |
 
-Everything is one container image, `hydrodog11/biohub-up`, with different
-entrypoints.
+**Two images, not one:**
+
+| Image | Runs |
+|---|---|
+| `hydrodog11/biohub-up` | web, worker, beat, migrate — same image, different entrypoints |
+| `hydrodog11/biohub-up-web` | `nubiup-next` |
+
+### Django does not serve the public site
+
+That is the thing to know before reading anything else here. Django serves
+`/cms/`, `/staff/`, `/api/v2/` and `/documents/`; a Next server renders every
+public page by calling Django's content API. The HTTPRoute in `gateway.yaml`
+decides which backend gets a path, and it mirrors the app repo's
+`nginx/default.conf` — that file is the readable reference.
+
+| Path | Backend |
+|---|---|
+| `/en/…`, `/pt/…`, `/_next/…`, `/api/forms/…` | `nubiup-next` |
+| `/media/…` | `nubiup-media` (the nginx container) |
+| everything else | `nubiup-web` |
+
+The two images are published from the same commit, tagged with the same SHA, and
+**must be rolled out together** — a public site expecting an API field the
+deployed Django does not serve renders broken pages. The app repo's
+`docs/deploy.md` is the full contract.
 
 ## Shipping a new version
 
@@ -29,12 +53,17 @@ cladewright and palworld — currently do nothing. A merge to `main` publishes a
 `:latest` to Docker Hub, and then nothing happens until you roll it out:
 
 ```bash
-kubectl -n rafael-homelab rollout restart deploy/nubiup-web deploy/nubiup-beat
+kubectl -n rafael-homelab rollout restart \
+  deploy/nubiup-web deploy/nubiup-next deploy/nubiup-beat
 ```
 
 That is a complete deploy by itself. `imagePullPolicy: Always` re-pulls `:latest`,
 and the web pod's `migrate` initContainer applies migrations and re-seeds before any
 container serves traffic.
+
+**All three, in one command.** Restarting `nubiup-web` alone leaves the public site
+running the previous build against a freshly migrated database — the exact skew the
+same-SHA tagging exists to prevent.
 
 This is why migrations are an **initContainer** rather than an Argo PreSync hook: a
 PreSync hook only fires when a manifest changes in git, so a restart-driven deploy
@@ -81,11 +110,22 @@ and project the `bitwarden-secretstore` ClusterSecretStore is pinned to (org
 `57f38d98-f6eb-4c54-a3ce-b3cc01497ae9`); a correctly-named secret in another project
 will not resolve.
 
-| Secret key | Value |
-|---|---|
-| `rafael-nubiup-django-secret-key` | Long random string: `python -c 'import secrets;print(secrets.token_urlsafe(64))'` |
-| `rafael-nubiup-db-username` | Exactly **`nubiup`** — see below |
-| `rafael-nubiup-db-password` | Strong password. Avoid `@ : / #`, it is used in a Postgres DSN |
+| Secret key | Value | Needed for |
+|---|---|---|
+| `rafael-nubiup-django-secret-key` | Long random string: `python -c 'import secrets;print(secrets.token_urlsafe(64))'` | Django `SECRET_KEY` |
+| `rafael-nubiup-db-password` | Strong password. Avoid `@ : / #`, it is used in a Postgres DSN | Postgres |
+| `rafael-nubiup-redis-password` | Same generator, same character caveat — it goes into four `redis://` URLs | Redis auth |
+| `rafael-nubiup-dockerhub-username` | The Docker Hub account name | Image pull |
+| `rafael-nubiup-dockerhub-token` | A **read-only** Docker Hub access token, not the account password | Image pull |
+| `rafael-nubiup-backup-s3-key-id` | Garage key id, scoped to the `porto-k8s-backup` bucket | Postgres backups |
+| `rafael-nubiup-backup-s3-secret` | The matching Garage secret | Postgres backups |
+| `rafael-nubiup-drive-service-account-b64` | `base64 -w0 drive-sa.json` — one line, no newlines | Drive sync (optional) |
+
+`rafael-nubiup-db-username` is **no longer read**. It used to be, and sourcing a
+role *name* from a secret store only created a way to get it wrong: a random value
+there yields `password authentication failed for user "dC0j4Qak…"`, which reads
+like a password problem and is not one. The role name is now a literal in
+`external-secret.yaml`, beside the comment explaining why.
 
 The username is not a free choice. `postgres-cluster.yaml` declares
 `bootstrap.initdb.owner: nubiup` and `database: nubiup`, and the *same* secret
@@ -97,8 +137,17 @@ Verify they resolved before going further — both should report `SecretSynced`:
 
 ```bash
 kubectl -n rafael-homelab get externalsecret
-kubectl -n rafael-homelab get secret nubiup-app-secret nubiup-db-secret
+kubectl -n rafael-homelab get secret \
+  nubiup-app-secret nubiup-db-secret nubiup-redis-secret \
+  nubiup-dockerhub nubiup-backup-s3-secret
 ```
+
+**Redis, Docker Hub and the backup credentials are not optional.** Redis rejects
+every connection without `nubiup-redis-secret` (it sets `--requirepass` from it,
+and the four `redis://` URLs are templated from the same value), the pull secret
+is what keeps the private image pullable, and without the Garage key the CNPG
+cluster archives no WAL. `nubiup-drive-secret` is the one that can wait — the
+site works without Drive sync, the Resources page is just empty.
 
 ### 2. Publish the image
 
@@ -109,7 +158,12 @@ Two separate things, both required.
 access tokens, with Read & Write). Without them the workflow's login step fails and
 nothing is published. Nothing is needed in *this* repo.
 
-**b. The Docker Hub repository must end up PUBLIC.**
+**b. BOTH Docker Hub repositories must end up PUBLIC** (or both covered by the
+pull secret — see below). There are two now: `hydrodog11/biohub-up` and
+`hydrodog11/biohub-up-web`. Checking one and forgetting the other leaves the
+public site in `ImagePullBackOff` while Django comes up fine, which reads as a
+Next problem and is not one.
+
 `hydrodog11/biohub-up` does not exist yet; the first push creates it, and Docker Hub
 creates new repositories using your account's *default repository privacy* setting —
 which for many accounts is **private**.
@@ -130,13 +184,43 @@ curl -s https://hub.docker.com/v2/repositories/hydrodog11/biohub-up/ \
 If it says `private: True`, either flip it to public in the Docker Hub UI, or add an
 imagePullSecret — but note that would make this the only app here needing one.
 
-### 3. Sync
+### 3. Point the tunnel at the gateway
+
+**The one value in these manifests that cannot be written blind.**
+`tunnelbinding.yaml` ships with a placeholder target and will fail loudly until
+it is filled in — deliberately, because the alternative failure is silent.
+
+Tunnel traffic does not pass through the HTTPRoute; it goes wherever the
+TunnelBinding points. While Django rendered the public site, pointing it at
+`nubiup-web:8000` was correct. Now it would serve Django for every public page —
+and since the tunnel is how the *public* reaches this site (LAN traffic resolves
+via Pi-hole to the cluster ingress instead), the site would look correct from the
+office and be broken from everywhere else.
+
+So the tunnel goes through the gateway too. Read the Envoy Service name once:
+
+```bash
+kubectl -n envoy-gateway-system get svc \
+  -l gateway.envoyproxy.io/owning-gateway-name=nubiup-gateway
+```
+
+and set it in `tunnelbinding.yaml`:
+
+```yaml
+target: https://<svc>.envoy-gateway-system.svc.cluster.local:443
+```
+
+Port 443 with `noTlsVerify: true` — the listener terminates TLS with the public
+hostname's certificate and this hop addresses it by an internal name, so the
+certificate cannot match. That is expected on a hop that never leaves the cluster.
+
+### 4. Sync
 
 The Application is registered in `kubernetes/deployments/kustomization.yaml`, so
 Argo picks it up. The web pod's `migrate` initContainer runs migrations and seeds the
 bilingual page tree plus the five staff groups before any container serves traffic.
 
-### 4. Create the first superuser
+### 5. Create the first superuser
 
 Nothing bootstraps an admin — deliberately, so there is never a default password
 reachable from the internet.
@@ -149,7 +233,7 @@ kubectl -n rafael-homelab exec deploy/nubiup-web -c web -it -- \
 Then sign in at `https://nubi.duarte-correia.pt/cms/` and assign staff groups
 under *Settings → Groups*.
 
-### 5. Fix the contact form addresses
+### 6. Fix the contact form addresses
 
 `create_initial_pages` seeds the ContactPage with
 `PLACEHOLDER-EMAIL@example.com` as both to- and from-address. These are **database
@@ -190,10 +274,18 @@ certificate and the gateway disagree and the listener serves no TLS:
 
 | File | What to change |
 |---|---|
-| `configmap.yaml` | `DJANGO_ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, `PUBLIC_SITE_URL`, `WAGTAIL_BASE_URL`, `WAGTAIL_SITE_HOSTNAME` |
+| `configmap.yaml` | `DJANGO_ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, `PUBLIC_SITE_URL`, `WAGTAIL_BASE_URL`, `WAGTAIL_SITE_HOSTNAME`, `FRONTEND_PREVIEW_URL` |
 | `gateway.yaml` | listener `hostname`, HTTPRoute `hostnames` |
 | `certificate.yaml` | `dnsNames` |
 | `tunnelbinding.yaml` | `fqdn` |
+| `deployment.yaml` | the `Host` header on both probes |
+| `next-deployment.yaml` | the `Host` header on both probes |
+
+The two probe entries are the ones that get missed, and they do not fail in a way
+that looks like a hostname problem: the pod is fine, serves correctly by hand, and
+every probe comes back 400 because `ALLOWED_HOSTS` no longer contains the value
+kubelet is sending. The applications themselves need nothing — both learn the host
+from each request.
 
 Then:
 
@@ -220,6 +312,8 @@ domain, not after.
 kubectl -n rafael-homelab logs deploy/nubiup-web -c web -f
 kubectl -n rafael-homelab logs deploy/nubiup-web -c worker -f
 kubectl -n rafael-homelab logs deploy/nubiup-beat -f
+# The public site. A blank or 500ing page is usually here, not in Django.
+kubectl -n rafael-homelab logs deploy/nubiup-next -f
 
 # Django shell
 kubectl -n rafael-homelab exec deploy/nubiup-web -c web -it -- python manage.py shell
@@ -231,22 +325,42 @@ kubectl -n rafael-homelab exec deploy/nubiup-web -c web -it -- python manage.py 
 # Why did the last deploy fail? (migrations run here)
 kubectl -n rafael-homelab logs deploy/nubiup-web -c migrate
 
-# Roll out a newly published image
-kubectl -n rafael-homelab rollout restart deploy/nubiup-web deploy/nubiup-beat
+# Roll out newly published images — all three together, always
+kubectl -n rafael-homelab rollout restart \
+  deploy/nubiup-web deploy/nubiup-next deploy/nubiup-beat
+
+# Is a public page actually rendering? (bypasses the gateway and the tunnel)
+kubectl -n rafael-homelab exec deploy/nubiup-next -- \
+  node -e "fetch('http://127.0.0.1:3000/en/',{headers:{Host:'nubi.duarte-correia.pt'}}).then(r=>console.log(r.status))"
+
+# Django's own health, as the probes see it
+kubectl -n rafael-homelab exec deploy/nubiup-web -c web -- \
+  python -c "import urllib.request;print(urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/readyz',headers={'Host':'nubi.duarte-correia.pt'})).read().decode())" 
 ```
 
 ### Notes
 
-- **`/media/` over the tunnel bypasses nginx.** The TunnelBinding points at
-  `nubiup-web:8000` directly, so tunnel traffic never passes through the HTTPRoute
-  and Django serves `/media/` itself. Correct, just less efficient. LAN traffic
-  resolves via Pi-hole to the gateway and does get the nginx path.
+- **The tunnel now goes through the gateway, so both paths route identically.**
+  This used to point at `nubiup-web:8000` directly, which meant tunnel traffic
+  bypassed the HTTPRoute and Django served `/media/` itself — tolerable when
+  Django also served the public site. It is not tolerable now: bypassing the
+  HTTPRoute means bypassing the Next split, so every public page would come back
+  from a Django that has no template for it. See "Point the tunnel at the gateway"
+  above.
+- **The probes are HTTP now, and they send an explicit `Host` header.** They used
+  to be TCP checks, on the reasoning that `ALLOWED_HOSTS` rejects the pod IP
+  kubelet sends. That diagnosis was right and the cure was wrong: a TCP check
+  passes on a Daphne that has lost its database and answers 500 to everything.
+  Django exposes `/healthz` (liveness, touches nothing) and `/readyz` (readiness,
+  round-trips Postgres and Redis). **Never point liveness at `/readyz`** — with one
+  replica on an RWO volume, a Postgres blip would restart the pod and take the
+  whole site down instead of degrading it.
 - **Newsletter and certificate sends need the worker and Redis healthy.** If a
   queued campaign never leaves, check the `worker` container logs before suspecting
   SMTP.
-- **Google Drive sync** is not configured. It needs a service-account JSON in
-  `GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON_B64` (base64), which belongs in Bitwarden as
-  `rafael-nubiup-drive-service-account-b64` wired through `external-secret.yaml` —
-  never in the ConfigMap. Until then `sync_drive_resources` raises
+- **Google Drive sync** is wired but needs its secret. `external-secret.yaml`
+  now provides `GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON_B64` to the web and worker
+  containers from Bitwarden's `rafael-nubiup-drive-service-account-b64`; create
+  that item and the sync starts working. Never the ConfigMap — it is a private key. Until then `sync_drive_resources` raises
   `DriveCredentialError` and the resources page stays empty. Setup steps are in the
   app repo at `docs/GOOGLE_DRIVE_SETUP.md`.
