@@ -1,0 +1,298 @@
+# The front door. One Service that owns the whole public origin.
+#
+# WHY THIS EXISTS
+#
+# nubi.duarte-correia.pt is not one backend. Next renders the public pages,
+# Django serves /cms/, /staff/ and /api/v2/, and a second nginx serves /media/
+# off the PVC. Something has to make those three look like one site.
+#
+# That job used to belong to the HTTPRoute in gateway.yaml, which worked for LAN
+# traffic and could not work for anyone else. The Cloudflare tunnel does not
+# enter through the Gateway — every TunnelBinding in this repo targets a workload
+# Service directly (see portfolio, cladewright, umami, and examples/) — so a
+# path split that lives only in the HTTPRoute is a split the tunnel cannot see.
+# Pointing the tunnel at the Envoy Service instead would need a generated name
+# read out of a running cluster, which is what left tunnelbinding.yaml carrying a
+# REPLACE-ME placeholder.
+#
+# So the split moves into a workload of its own. The tunnel targets it by an
+# ordinary Service name like every other deployment here, and the HTTPRoute
+# collapses to a single rule pointing at the same place — which means LAN and
+# WAN traverse ONE routing table instead of two that have to agree.
+#
+# WHAT THAT BUYS, beyond the tunnel working:
+#
+#   - /cms/ and /staff/ are reachable from outside the LAN. Nubi UP has staff who
+#     edit content from wherever they are; an admin surface that only answers on
+#     the LAN is an admin surface most of them cannot use.
+#   - The routing rules exist in one place per environment — this ConfigMap in
+#     the cluster, nginx/default.conf in compose — instead of three.
+#   - X-Forwarded-For has the same shape on both paths. See TRUSTED_PROXY_HOPS
+#     in configmap.yaml.
+#
+# THIS MOUNTS NOTHING. Like nubiup-next and unlike the app pod, it holds no RWO
+# volume, so it rolls, it scales, and a deploy of the front door has no gap.
+# Putting it in the app pod would have dragged the whole site into that pod's
+# 20-40s `Recreate` window — including the public site, which is exempt today.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nubiup-proxy-nginx
+  namespace: rafael-homelab
+data:
+  default.conf: |
+    # Upstreams are Service DNS names, resolved by nginx AT STARTUP because the
+    # proxy_pass targets are literals rather than variables. ClusterIPs are
+    # stable for the life of a Service, so this is fine — but if any of these
+    # three Services is ever deleted and recreated, restart this Deployment or
+    # it will keep the old address.
+    map $http_upgrade $connection_upgrade {
+      default upgrade;
+      ''      close;
+    }
+
+    # Report the scheme the CLIENT used, not the scheme of this hop.
+    #
+    # TLS terminates upstream — at Envoy on the LAN path, at Cloudflare on the
+    # tunnel path — so $scheme is always "http" by the time it reaches here.
+    # Passing that on would tell Django every request was insecure. Both
+    # upstreams set X-Forwarded-Proto themselves, so prefer theirs and fall back
+    # to $scheme only when the header is absent.
+    #
+    # Trusting a client-supplied value is safe here because nothing outside the
+    # cluster can reach this Service: it is a ClusterIP, addressed only by Envoy
+    # and by cloudflared.
+    map $http_x_forwarded_proto $forwarded_proto {
+      default $http_x_forwarded_proto;
+      ''      $scheme;
+    }
+
+    server {
+      listen 8080;
+      server_tokens off;
+
+      # Wagtail image uploads and vault documents both come through here.
+      # Matches the app repo's nginx/default.conf; raising one without the other
+      # gives an upload that succeeds locally and 413s in production.
+      client_max_body_size 25m;
+
+      # No security headers are set here on purpose. Next sets its own
+      # (web/next.config.ts) and Django sets its own (SecurityMiddleware), and a
+      # third source would either duplicate or silently override them. HSTS in
+      # particular is remembered by the browser, so an inconsistent max-age
+      # across paths on one origin flaps the pin.
+
+      # ── Order matters ───────────────────────────────────────────────────────
+      #
+      # This is the same split as the app repo's nginx/default.conf, and the two
+      # must agree — that file is the readable reference for why each rule
+      # exists. Read them side by side before changing either.
+      #
+      # ONE DELIBERATE DIFFERENCE: there is no /static/ location here. In compose
+      # nginx serves /static/ off a shared volume; in the cluster collectstatic
+      # runs at image build and WhiteNoise serves /static/ from inside the Django
+      # container, so it must fall through to the catch-all. Adding an alias here
+      # would 404 the entire staff SPA bundle.
+
+      # ── nginx (the media container in the app pod) ──────────────────────────
+      # Wagtail uploads and renditions. The vault is deliberately not mounted
+      # there and is streamed by an authenticated Django view instead.
+      location /media/ {
+        proxy_pass         http://nubiup-media.rafael-homelab.svc.cluster.local:80;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Forwarded-Proto $forwarded_proto;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+      }
+
+      # ── Next ────────────────────────────────────────────────────────────────
+      # The public site's build output. Content-hashed, and Next sends its own
+      # immutable cache headers — passed through untouched rather than overridden.
+      location /_next/ {
+        proxy_pass         http://nubiup-next.rafael-homelab.svc.cluster.local:3000;
+        proxy_http_version 1.1;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Forwarded-Proto $forwarded_proto;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+      }
+
+      # Public form posts. The route handlers live in the Next app. This must be
+      # more specific than the catch-all, or every form post lands on a Django
+      # URL that does not exist. Django's own API stays at /api/v2/ and is NOT
+      # here — it falls through to Django below.
+      location /api/forms/ {
+        proxy_pass         http://nubiup-next.rafael-homelab.svc.cluster.local:3000;
+        proxy_http_version 1.1;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Forwarded-Proto $forwarded_proto;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+      }
+
+      # Every public page. Wagtail's locale trees keep the /en/ and /pt/
+      # prefixes, so these are the whole public site.
+      #
+      # A regex location, which nginx checks after prefix locations and in file
+      # order — the same reason the app repo writes it here rather than first.
+      # The bare / is deliberately NOT matched: it falls to Django below, which
+      # redirects to the visitor's language (config/urls.py LanguageRootRedirect).
+      location ~ ^/(en|pt)/ {
+        proxy_pass         http://nubiup-next.rafael-homelab.svc.cluster.local:3000;
+        proxy_http_version 1.1;
+        # Wagtail resolves the site from this header and the renderer forwards it
+        # onward to Django. Without it the pages API answers an unmatched site
+        # with an EMPTY 200 rather than an error, and every page renders blank —
+        # a failure that reads as a routing bug and is not one.
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Forwarded-Proto $forwarded_proto;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+      }
+
+      # ── Everything else is Django ───────────────────────────────────────────
+      # /cms/, /staff/ and its WhiteNoise /static/ bundle, /api/v2/, /documents/,
+      # /robots.txt, /healthz, /readyz, the ws/notifications/ websocket, and the
+      # bare / language redirect.
+      location / {
+        proxy_pass         http://nubiup-web.rafael-homelab.svc.cluster.local:8000;
+        proxy_http_version 1.1;
+        # The staff area's notification websocket lives under here. $connection_upgrade
+        # is "close" for ordinary requests and "upgrade" only for a real upgrade,
+        # rather than the unconditional "upgrade" the compose file sends.
+        proxy_set_header   Upgrade $http_upgrade;
+        proxy_set_header   Connection $connection_upgrade;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Forwarded-Proto $forwarded_proto;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        # Long enough for the websocket to idle without being cut.
+        proxy_read_timeout 86400;
+      }
+    }
+
+    # The probe listener, on a port the Service does not expose.
+    #
+    # Separate from the public server block so the health path is not reachable
+    # from the internet and — more to the point — does not shadow Django's own
+    # /healthz, which the catch-all above forwards and which a public
+    # nubi.duarte-correia.pt/healthz is supposed to reach.
+    server {
+      listen 8081;
+      server_tokens off;
+      access_log off;
+      location = /healthz {
+        return 200 "ok\n";
+        add_header Content-Type text/plain;
+      }
+      location / {
+        return 404;
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nubiup-proxy
+  namespace: rafael-homelab
+spec:
+  # Two, and they matter more than most: every request to the site now passes
+  # through this Deployment, so a single replica would make a routine restart a
+  # site-wide outage. It mounts nothing, so there is nothing stopping it.
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: nubiup-proxy
+  template:
+    metadata:
+      labels:
+        app: nubiup-proxy
+      annotations:
+        # Roll the pods when the routing changes. Without this, editing the
+        # ConfigMap updates the mounted file and nginx never reloads, so the
+        # rules in git and the rules in force drift apart silently.
+        # Bump this whenever default.conf above changes.
+        nubiup.io/config-revision: "1"
+    spec:
+      containers:
+        - name: nginx
+          # The unprivileged image, not stock nginx. Stock starts its master as
+          # root and writes to /var/cache/nginx and /var/run, which is why the
+          # media container in deployment.yaml still carries a weakened
+          # securityContext. There is no reason to inherit that here: this image
+          # runs as uid 101 and listens on 8080 already, so it takes the full
+          # context below from the start.
+          image: nginxinc/nginx-unprivileged:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: health
+              containerPort: 8081
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d
+              readOnly: true
+            # nginx-unprivileged keeps its temp bodies and its pid under /tmp,
+            # which is what makes readOnlyRootFilesystem below possible.
+            - name: tmp
+              mountPath: /tmp
+          # HTTP, not TCP. A TCP check passes on an nginx that loaded a config
+          # it cannot serve; this asks it to actually answer something.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          # Same endpoint, and here that is correct rather than sloppy: this
+          # probe must depend on nothing but nginx itself. Pointing it at a real
+          # page would mean a Django or Next outage restarts the front door,
+          # a restart that cannot fix either and takes the whole site with it.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+              ephemeral-storage: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+              ephemeral-storage: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 101
+            allowPrivilegeEscalation: false
+            # Safe here, unlike on the Django pod: everything nginx writes goes
+            # to the /tmp emptyDir mounted above.
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: nubiup-proxy-nginx
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nubiup-proxy
+  namespace: rafael-homelab
+spec:
+  selector:
+    app: nubiup-proxy
+  ports:
+    # Port 80 so the TunnelBinding target reads as an ordinary http:// URL, the
+    # same shape every other deployment in this repo uses.
+    - port: 80
+      targetPort: 8080

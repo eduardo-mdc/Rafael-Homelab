@@ -1,63 +1,46 @@
 # Public access over the shared Cloudflare tunnel.
 #
-# ┌──────────────────────────────────────────────────────────────────────────┐
-# │ ACTION REQUIRED ON FIRST DEPLOY — the target below is a placeholder.      │
-# └──────────────────────────────────────────────────────────────────────────┘
+# This is how the PUBLIC reaches the site. On the LAN, Pi-hole resolves the same
+# hostname to the cluster ingress and traffic goes through nubiup-gateway
+# instead; both paths end up at the same front door, which is the point.
 #
-# WHY THIS CHANGED. This used to point straight at `nubiup-web:8000`, and that
-# was correct while Django rendered the public site. It no longer does: a Next
-# server (nubiup-next) renders every public page, and which backend serves a
-# given path is decided by the HTTPRoute in gateway.yaml.
+# WHY IT TARGETS nubiup-proxy. Tunnel traffic does not pass through the Gateway,
+# so whatever this points at is the whole site as far as the internet is
+# concerned. That used to be `nubiup-web:8000`, which was right while Django
+# rendered the public pages and became wrong when Next took them over.
 #
-# Tunnel traffic does NOT pass through the HTTPRoute. It goes wherever this
-# points, directly. So pointing it at Django again would mean every public page
-# arriving over the tunnel is answered by a Django that has no template for it —
-# and the tunnel is how the PUBLIC reaches this site. (On the LAN, Pi-hole
-# resolves the same hostname to the cluster ingress, which does go through the
-# gateway, so the two paths would disagree — the site would look fine from the
-# office and be broken from outside.)
+# The obvious repair — send tunnel traffic through the Gateway too — needs the
+# Service that Envoy Gateway provisions, whose name carries a generated hash and
+# so has to be read out of a running cluster. This file carried a REPLACE-ME
+# placeholder for exactly that reason, and a placeholder is not a deployment.
 #
-# The fix is to send tunnel traffic through the gateway as well, so both paths
-# share one routing table. That means targeting the Service Envoy Gateway
-# provisions for nubiup-gateway. Its name is deterministic but carries a hash,
-# so it has to be read out of the cluster once:
+# So the split moved into a workload with an ordinary, predictable name, and this
+# targets it the way every other TunnelBinding in this repo targets its app —
+# plain http, a Service DNS name, no hash to look up. See portfolio, cladewright,
+# umami and examples/tunnel-binding.yaml; proxy.yaml has the full reasoning.
 #
-#   kubectl -n envoy-gateway-system get svc \
-#     -l gateway.envoyproxy.io/owning-gateway-name=nubiup-gateway
-#
-# Take the name from that and set it below, as:
-#
-#   target: https://<svc>.envoy-gateway-system.svc.cluster.local:443
-#
-# Port 443 with `noTlsVerify: true`, because the gateway listener terminates TLS
-# with the Let's Encrypt certificate for the public hostname and this hop
-# addresses it by its internal name — the certificate will not match, and that
-# is expected on a hop that never leaves the cluster.
-#
-# Everything sensitive behind this is authenticated regardless of which backend
-# answers: /cms/ is Wagtail login, /staff/ and /api/v2/staff/ are gated by
-# StaffRequiredMixin and DRF permission classes, and django-axes rate-limits the
-# login itself.
+# THE WHOLE SITE COMES THROUGH HERE, including /cms/ and /staff/. Nubi UP has
+# staff who edit content from outside the building, so an admin surface that only
+# answers on the LAN is one most of them cannot use. Everything sensitive behind
+# it is authenticated regardless of which backend answers: /cms/ is Wagtail
+# login, /staff/ and /api/v2/staff/ are gated by StaffRequiredMixin and DRF
+# permission classes, and django-axes rate-limits the login itself.
 apiVersion: networking.cfargotunnel.com/v1alpha1
 kind: TunnelBinding
 metadata:
   name: nubiup
   namespace: rafael-homelab
 subjects:
-  - name: nubiup-web
+  - name: nubiup-proxy
     spec:
       fqdn: nubi.duarte-correia.pt
-      protocol: https
+      # Plain http, unlike the previous https-to-the-gateway shape: this hop
+      # never leaves the cluster, and TLS already terminated at Cloudflare's
+      # edge. Nothing here is reachable from outside the cluster network.
+      protocol: http
       http2Origin: true
-      # The internal hop addresses the gateway by its cluster name, which the
-      # public certificate does not cover. See above.
       noTlsVerify: true
-      # PLACEHOLDER — replace with the Envoy Service for nubiup-gateway, using
-      # the kubectl command in the comment above. Left obviously wrong on
-      # purpose: a name that does not resolve fails loudly at deploy, whereas
-      # quietly pointing this back at nubiup-web:8000 would serve a subtly
-      # broken public site to everyone outside the LAN.
-      target: https://REPLACE-ME-envoy-rafael-homelab-nubiup-gateway-XXXXXXXX.envoy-gateway-system.svc.cluster.local:443
+      target: http://nubiup-proxy.rafael-homelab.svc.cluster.local:80
 tunnelRef:
   kind: ClusterTunnel
   name: porto-cluster-tunnel

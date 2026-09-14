@@ -31,83 +31,33 @@ spec:
       sectionName: https
   hostnames:
     - "nubi.duarte-correia.pt"
-  # THE PUBLIC SITE IS NOT DJANGO ANY MORE.
+  # ONE RULE, ON PURPOSE. The path split lives in nubiup-proxy, not here.
   #
-  # Django serves the CMS, the staff SPA and the API; a Next server (nubiup-next)
-  # renders every public page against that API. These rules are the same split
-  # the app repo's nginx/default.conf makes for docker-compose, and the two must
-  # agree — that file is the readable reference for why each one exists.
+  # This used to carry the whole split — /_next/, /api/forms/ and /en/ + /pt/ to
+  # nubiup-next, /media/ to nubiup-media, everything else to Django. That worked,
+  # and it could only ever work for LAN traffic: the Cloudflare tunnel does not
+  # enter through the Gateway, so a split that lives only here is a split the
+  # public internet never sees. proxy.yaml has the full reasoning; the ConfigMap
+  # there is where those five rules now live, one for one.
   #
-  # Rule ORDER is irrelevant here: Gateway API matches the LONGEST prefix, not
-  # the first listed. (nginx matches in file order, which is why the same split
-  # is written most-specific-first over there.) They are ordered most-specific
-  # first anyway, so the two files read the same way.
+  # Sending both paths through one front door means there is a single routing
+  # table to keep correct instead of two that have to agree — the same reason
+  # portfolio's HTTPRoute is also a single PathPrefix: / to its frontend.
   #
   # Host header: preserved as sent, which is load-bearing rather than hygiene.
-  # nubiup-next forwards it to Django, and Wagtail resolves the site from it —
-  # when Site.find_for_request matches nothing the pages API answers with an
-  # EMPTY 200 rather than an error, so a rewritten Host renders a blank site that
-  # reads as a routing bug and is not one. Do not add a URLRewrite filter here.
+  # nubiup-proxy passes it on and nubiup-next forwards it to Django, where
+  # Wagtail resolves the site from it — and when Site.find_for_request matches
+  # nothing the pages API answers with an EMPTY 200 rather than an error, so a
+  # rewritten Host renders a blank site that reads as a routing bug and is not
+  # one. Do not add a URLRewrite filter here.
   rules:
-    # ── Next ────────────────────────────────────────────────────────────────
-    # The public site's build output. Content-hashed and served with Next's own
-    # immutable cache headers, which are passed through untouched.
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /_next/
-      backendRefs:
-        - name: nubiup-next
-          port: 3000
-
-    # Public form posts. The route handlers live in the Next app and proxy to
-    # Django server-side against an allow-list of four paths. This must be more
-    # specific than the catch-all, or every form post lands on a Django URL that
-    # does not exist. Note Django's own API stays at /api/v2/ and is NOT here.
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /api/forms/
-      backendRefs:
-        - name: nubiup-next
-          port: 3000
-
-    # Every public page. Wagtail's locale trees keep the /en/ and /pt/ prefixes,
-    # so these two are the whole public site. The bare / is deliberately absent:
-    # it falls to Django below, which redirects to the visitor's language.
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /en/
-        - path:
-            type: PathPrefix
-            value: /pt/
-      backendRefs:
-        - name: nubiup-next
-          port: 3000
-
-    # ── nginx ───────────────────────────────────────────────────────────────
-    # /media/ off the read-only nginx container in the app pod. Wagtail uploads
-    # and renditions only — the vault is deliberately not mounted there.
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /media/
-      backendRefs:
-        - name: nubiup-media
-          port: 80
-
-    # ── Django ──────────────────────────────────────────────────────────────
-    # Everything left: /cms/, /staff/ (the SPA shell and its /static/ bundle via
-    # WhiteNoise), /api/v2/, /documents/, /robots.txt, /healthz, the
-    # ws/notifications/ websocket, and the bare / language redirect.
     - matches:
         - path:
             type: PathPrefix
             value: /
       backendRefs:
-        - name: nubiup-web
-          port: 8000
+        - name: nubiup-proxy
+          port: 80
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: BackendTrafficPolicy

@@ -15,6 +15,7 @@ domain](#moving-to-the-real-domain).
 |---|---|
 | `nubiup-web` (pod, 3 containers) | `web` Daphne/ASGI · `worker` Celery · `media` nginx serving `/media/`. Plus a `migrate` initContainer |
 | `nubiup-next` | The **public site** — a Next server, 2 replicas, rolling updates |
+| `nubiup-proxy` | The **front door** — nginx, 2 replicas. Owns the path split; both the Gateway and the tunnel point here |
 | `nubiup-beat` | Celery beat — the scheduler, exactly one replica |
 | `nubiup-postgres` | CloudNativePG, 3 instances |
 | `nubiup-redis` | Celery broker `/0`, results `/1`, Channels `/2`, Django cache `/3` |
@@ -30,15 +31,22 @@ domain](#moving-to-the-real-domain).
 
 That is the thing to know before reading anything else here. Django serves
 `/cms/`, `/staff/`, `/api/v2/` and `/documents/`; a Next server renders every
-public page by calling Django's content API. The HTTPRoute in `gateway.yaml`
+public page by calling Django's content API. The **ConfigMap in `proxy.yaml`**
 decides which backend gets a path, and it mirrors the app repo's
 `nginx/default.conf` — that file is the readable reference.
 
 | Path | Backend |
 |---|---|
 | `/en/…`, `/pt/…`, `/_next/…`, `/api/forms/…` | `nubiup-next` |
-| `/media/…` | `nubiup-media` (the nginx container) |
+| `/media/…` | `nubiup-media` (the nginx container in the app pod) |
 | everything else | `nubiup-web` |
+
+**The split lives in one place, and it is not the HTTPRoute.** It used to be, and
+that could only ever serve LAN traffic: the Cloudflare tunnel does not enter
+through the Gateway, so rules written there are invisible to the public
+internet — which is why `tunnelbinding.yaml` sat on a placeholder. Both the
+HTTPRoute and the TunnelBinding are now a single hop to `nubiup-proxy`, so LAN
+and WAN traverse the same table and cannot drift apart.
 
 The two images are published from the same commit, tagged with the same SHA, and
 **must be rolled out together** — a public site expecting an API field the
@@ -54,16 +62,17 @@ cladewright and palworld — currently do nothing. A merge to `main` publishes a
 
 ```bash
 kubectl -n rafael-homelab rollout restart \
-  deploy/nubiup-web deploy/nubiup-next deploy/nubiup-beat
+  deploy/nubiup-web deploy/nubiup-next deploy/nubiup-beat deploy/nubiup-proxy
 ```
 
 That is a complete deploy by itself. `imagePullPolicy: Always` re-pulls `:latest`,
 and the web pod's `migrate` initContainer applies migrations and re-seeds before any
 container serves traffic.
 
-**All three, in one command.** Restarting `nubiup-web` alone leaves the public site
+**All four, in one command.** Restarting `nubiup-web` alone leaves the public site
 running the previous build against a freshly migrated database — the exact skew the
-same-SHA tagging exists to prevent.
+same-SHA tagging exists to prevent. (`nubiup-proxy` carries no application code and
+rarely needs it, but it costs nothing and keeps the command one thing to remember.)
 
 This is why migrations are an **initContainer** rather than an Argo PreSync hook: a
 PreSync hook only fires when a manifest changes in git, so a restart-driven deploy
@@ -184,35 +193,32 @@ curl -s https://hub.docker.com/v2/repositories/hydrodog11/biohub-up/ \
 If it says `private: True`, either flip it to public in the Docker Hub UI, or add an
 imagePullSecret — but note that would make this the only app here needing one.
 
-### 3. Point the tunnel at the gateway
+### 3. The tunnel — nothing to fill in
 
-**The one value in these manifests that cannot be written blind.**
-`tunnelbinding.yaml` ships with a placeholder target and will fail loudly until
-it is filled in — deliberately, because the alternative failure is silent.
-
-Tunnel traffic does not pass through the HTTPRoute; it goes wherever the
-TunnelBinding points. While Django rendered the public site, pointing it at
-`nubiup-web:8000` was correct. Now it would serve Django for every public page —
-and since the tunnel is how the *public* reaches this site (LAN traffic resolves
-via Pi-hole to the cluster ingress instead), the site would look correct from the
-office and be broken from everywhere else.
-
-So the tunnel goes through the gateway too. Read the Envoy Service name once:
-
-```bash
-kubectl -n envoy-gateway-system get svc \
-  -l gateway.envoyproxy.io/owning-gateway-name=nubiup-gateway
-```
-
-and set it in `tunnelbinding.yaml`:
+`tunnelbinding.yaml` needs no per-cluster value. It targets an ordinary Service:
 
 ```yaml
-target: https://<svc>.envoy-gateway-system.svc.cluster.local:443
+target: http://nubiup-proxy.rafael-homelab.svc.cluster.local:80
 ```
 
-Port 443 with `noTlsVerify: true` — the listener terminates TLS with the public
-hostname's certificate and this hop addresses it by an internal name, so the
-certificate cannot match. That is expected on a hop that never leaves the cluster.
+**This used to be the one value here that could not be written blind**, and the
+reason is worth keeping. Tunnel traffic does not pass through the HTTPRoute; it
+goes wherever the TunnelBinding points. While Django rendered the public site,
+`nubiup-web:8000` was correct. Once Next took the public pages over, the split
+mattered — and the split lived in the HTTPRoute, which the tunnel cannot see. The
+apparent fix, routing the tunnel through the Gateway, needs the Service Envoy
+provisions, whose name carries a generated hash and had to be read out of a
+running cluster with `kubectl`. So the manifest carried a `REPLACE-ME`, and a
+manifest with a placeholder in it is not a deployment.
+
+Moving the split into `nubiup-proxy` removed the lookup entirely. The tunnel now
+targets a workload by a name that is known from the manifests alone — the same
+shape portfolio, cladewright and umami all use.
+
+If you ever point this somewhere else, remember what the failure looks like: the
+tunnel is how the **public** reaches this site, while LAN traffic resolves via
+Pi-hole to the cluster ingress. Get it wrong and the site looks correct from the
+office and is broken from everywhere else.
 
 ### 4. Sync
 
@@ -250,15 +256,23 @@ goes to the pod log. That is correct until the domain and a real mailbox exist.
 Not working until then: password reset (`/cms/password_reset/`), the contact form,
 newsletter sends, and certificate delivery. Everything else is unaffected.
 
-To enable it, add `rafael-nubiup-email-host-user` / `-password` to
-`external-secret.yaml`, then set in `configmap.yaml`:
+**Turning it on is uncommenting, not writing.** Both halves are already in the
+manifests, commented out, and every Django workload (web, worker, beat, migrate)
+already loads `nubiup-env` and `nubiup-app-secret` — no Deployment changes:
 
-```yaml
-EMAIL_HOST: smtp.example.com
-EMAIL_PORT: "587"
-EMAIL_USE_TLS: "true"
-DEFAULT_FROM_EMAIL: NUBI UP <hello@the-real-domain>
-```
+1. Create `rafael-nubiup-email-host-user` and `rafael-nubiup-email-host-password`
+   in Bitwarden. **Do this first.** An ExternalSecret that names a key which does
+   not exist fails as a whole, and `nubiup-app-secret` also carries
+   `DJANGO_SECRET_KEY` — so uncommenting early breaks Django, not just email.
+2. Uncomment the two `EMAIL_HOST_*` entries in `external-secret.yaml`.
+3. Uncomment and fill the email block in `configmap.yaml`: `EMAIL_HOST`,
+   `EMAIL_PORT`, `EMAIL_USE_TLS`, `DEFAULT_FROM_EMAIL`, `NEWSLETTER_REPLY_TO`.
+4. Once Argo has synced, restart `nubiup-web` and `nubiup-beat`. Environment from
+   `envFrom` is read when a container starts, so a synced ConfigMap changes
+   nothing in a pod that is already running — mail keeps going to the log and it
+   looks like the settings are wrong.
+5. Change the ContactPage to- and from-addresses in the CMS (see above). Those are
+   database rows, and no variable reaches them.
 
 `DEFAULT_FROM_EMAIL` matters: unset, it defaults to a literal
 `PLACEHOLDER-EMAIL@example.com`, which is deliverable-looking and undeliverable.
@@ -327,7 +341,7 @@ kubectl -n rafael-homelab logs deploy/nubiup-web -c migrate
 
 # Roll out newly published images — all three together, always
 kubectl -n rafael-homelab rollout restart \
-  deploy/nubiup-web deploy/nubiup-next deploy/nubiup-beat
+  deploy/nubiup-web deploy/nubiup-next deploy/nubiup-beat deploy/nubiup-proxy
 
 # Is a public page actually rendering? (bypasses the gateway and the tunnel)
 kubectl -n rafael-homelab exec deploy/nubiup-next -- \
@@ -340,13 +354,20 @@ kubectl -n rafael-homelab exec deploy/nubiup-web -c web -- \
 
 ### Notes
 
-- **The tunnel now goes through the gateway, so both paths route identically.**
-  This used to point at `nubiup-web:8000` directly, which meant tunnel traffic
-  bypassed the HTTPRoute and Django served `/media/` itself — tolerable when
-  Django also served the public site. It is not tolerable now: bypassing the
-  HTTPRoute means bypassing the Next split, so every public page would come back
-  from a Django that has no template for it. See "Point the tunnel at the gateway"
+- **The tunnel and the Gateway both hit `nubiup-proxy`, so both paths route
+  identically.** The tunnel used to point at `nubiup-web:8000` directly, which
+  meant tunnel traffic bypassed the HTTPRoute and Django served `/media/` itself —
+  tolerable while Django also served the public site, and not afterwards:
+  bypassing the HTTPRoute meant bypassing the Next split, so every public page
+  came back from a Django with no template for it. Routing the tunnel through
+  Envoy would have fixed that at the cost of a Service name only a running
+  cluster can tell you. One front door fixes it with neither. See "The tunnel"
   above.
+- **`/cms/` and `/staff/` are reachable from outside the LAN, on purpose.** Nubi UP
+  is a student organisation with staff who work from wherever they are; an admin
+  surface that only answers on the LAN is one most of them cannot use. Wagtail
+  login, `StaffRequiredMixin`, the DRF permission classes and django-axes are what
+  hold, not network position.
 - **The probes are HTTP now, and they send an explicit `Host` header.** They used
   to be TCP checks, on the reasoning that `ALLOWED_HOSTS` rejects the pod IP
   kubelet sends. That diagnosis was right and the cure was wrong: a TCP check
