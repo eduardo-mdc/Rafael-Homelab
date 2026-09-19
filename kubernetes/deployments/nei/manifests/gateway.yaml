@@ -1,0 +1,68 @@
+# The LAN door: Pi-hole resolves the name, Envoy terminates TLS with the
+# cert-manager certificate, and the same web Service answers.
+#
+# Worth having for the wall: the projector machine at the station can reach the
+# board without leaving the house network, so a Cloudflare outage on the night
+# costs the phones and not the wall.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: nei-gateway
+  namespace: rafael-homelab
+spec:
+  gatewayClassName: envoy
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: "nei.duarte-correia.pt"
+      allowedRoutes:
+        namespaces:
+          from: Same
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: nei-tls-cert
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: nei-http
+  namespace: rafael-homelab
+spec:
+  parentRefs:
+    - name: nei-gateway
+      namespace: rafael-homelab
+      sectionName: https
+  hostnames:
+    - "nei.duarte-correia.pt"
+  rules:
+    # The admin panel, on the LAN only. It is deliberately NOT in the tunnel:
+    # tunnelbinding.yaml points at nei-web, and the web image's Caddy has no
+    # route to /admin at all, so the public door cannot reach it however hard
+    # anybody knocks. Getting here means being on the house network with the
+    # Pi-hole resolving the name.
+    #
+    # It still needs a password on top of that: the panel does not mount at all
+    # unless ADMIN_PASSWORD is set, and sqladmin bounces an unauthenticated
+    # request to /admin/login. The prefix covers /admin/login and
+    # /admin/statics, which the panel needs to render.
+    #
+    # What it is for after the night: "Download the evening" hands over the
+    # three tables of the study as one zip, so the export needs no cluster
+    # access at all.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /admin
+      backendRefs:
+        - name: nei-api
+          port: 8000
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: nei-web
+          port: 80

@@ -1,0 +1,37 @@
+# Everything the exhibit can be retuned with, and nothing secret.
+#
+# These are the values the owner changes DURING the evening — the repo's own
+# rule is that tuning lives in the environment, never in code. Changing one here
+# and letting Argo sync is a restart of the api pod and nothing else: the board
+# is derived from `threads` on every read, and `threads` is append-only, so a
+# restart costs seconds and loses nothing.
+#
+#   CRYSTAL       weight at which a thread sets: taut, teal, immovable
+#   HALFLIFE_MIN  unused threads fade with this half-life. Lower it if the board
+#                 looks frozen by 21:00; raise it if it is thrashing.
+#   ARRIVAL_EVERY routes and retellings between new concepts arriving
+#   BRIDGE_MIN/MAX pins a visitor puts between the two ends. Lower MAX if a
+#                 queue forms.
+#   POLL_MS       how often phones and the wall refetch. The client reads this
+#                 from the board payload, so changing it needs no rebuild.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nei-env
+  namespace: rafael-homelab
+data:
+  CRYSTAL: "10"
+  HALFLIFE_MIN: "90"
+  ARRIVAL_EVERY: "6"
+  FLOAT_MIN: "3"
+  FLOAT_MAX: "8"
+  FLOAT_TTL_MIN: "25"
+  PATH_LEN: "4"
+  BRIDGE_MIN: "3"
+  BRIDGE_MAX: "6"
+  POLL_MS: "4000"
+  ARRIVALS_ENABLED: "true"
+  LOG_LEVEL: "info"
+  TZ: "Europe/Lisbon"
+  # Read by the bootstrap initContainer; the SQL ships inside the api image.
+  SQL_DIR: "/app/db"

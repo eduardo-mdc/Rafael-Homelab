@@ -1,0 +1,33 @@
+# Only the api talks to the board's Postgres. Nothing else in this namespace has
+# any business there, and the exhibit's promise about what it keeps rests on that
+# being enforced rather than assumed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nei-postgres-ingress
+  namespace: rafael-homelab
+spec:
+  podSelector:
+    matchLabels:
+      # CNPG's standard label on every instance of a Cluster.
+      cnpg.io/cluster: nei-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # The API, including its bootstrap initContainer.
+        - podSelector:
+            matchLabels:
+              app: nei-api
+        # The instances themselves. THREE of them — streaming replication is
+        # pod-to-pod, so omitting this breaks the cluster rather than securing it.
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: nei-postgres
+        # The operator: failover, switchover, backups, `kubectl cnpg psql`.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+      ports:
+        - protocol: TCP
+          port: 5432

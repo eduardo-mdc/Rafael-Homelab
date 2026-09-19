@@ -1,0 +1,14 @@
+# DNS-01 through Cloudflare, like the other apps here. The name only has to
+# resolve on the LAN; the certificate is real either way.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: nei-tls-cert
+  namespace: rafael-homelab
+spec:
+  secretName: nei-tls-cert
+  issuerRef:
+    name: letsencrypt-cloudflare-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - nei.duarte-correia.pt

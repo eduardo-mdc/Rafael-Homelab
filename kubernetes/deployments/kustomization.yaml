@@ -7,3 +7,4 @@ resources:
   - cladewright/cladewright.app.yaml
   - palworld/palworld.app.yaml
   - nubiup/nubiup.app.yaml
+  - nei/nei.app.yaml

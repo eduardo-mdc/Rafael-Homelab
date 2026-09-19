@@ -1,0 +1,89 @@
+# The site: page 1, the board, and the only thing the public reaches.
+#
+# Caddy serves the built site out of the image and proxies /api to the api
+# Service. One origin for both, because the board's island and the QR code it
+# draws use relative paths — a separate API hostname would put the wall's QR
+# code and the phone that scans it on different origins.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nei-web
+  namespace: rafael-homelab
+spec:
+  # Two: the site is static inside the image, so replicas cost nothing and a
+  # node draining during the event does not take the exhibit with it.
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: nei-web
+  template:
+    metadata:
+      labels:
+        app: nei-web
+    spec:
+      containers:
+        - name: web
+          image: hydrodog11/nei-web:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            # The Caddyfile reads this; the Service name lives here only.
+            - name: API_UPSTREAM
+              value: nei-api.rafael-homelab.svc.cluster.local:8000
+          # The site is static: if Caddy answers, it is serving. The api has its
+          # own probes, and a database outage must not take page 1 off the air.
+          readinessProbe:
+            httpGet:
+              path: /pt/
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /pt/
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+              ephemeral-storage: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+              ephemeral-storage: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            # Caddy writes its config and data under XDG_*, which the image
+            # points at /tmp; nothing else needs a writable filesystem.
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nei-web
+  namespace: rafael-homelab
+spec:
+  selector:
+    app: nei-web
+  ports:
+    - port: 80
+      targetPort: 8080

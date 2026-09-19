@@ -1,0 +1,71 @@
+# The board. Every thread a visitor lays is written here, and the evening cannot
+# be replayed, so this is the one thing in the namespace that matters.
+#
+# `threads` is append-only by design: weights are derived on read, and nothing
+# in the API ever updates or deletes a row. That makes recovery simple — a
+# restore is the evening up to the backup — and it makes barman's WAL archive
+# worth having during the event, not just after it.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: nei-postgres
+  namespace: rafael-homelab
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.2
+  storage:
+    # The whole evening is a few hundred thousand rows at most; the pool, the
+    # seed and the snapshot are about 220 KB of SQL. 5Gi is what the other apps
+    # in this namespace use and is far more than this needs.
+    size: 5Gi
+  bootstrap:
+    initdb:
+      database: board
+      owner: board
+      secret:
+        name: nei-db-secret
+  enableSuperuserAccess: false
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://porto-k8s-backup/cnpg/nei
+      endpointURL: http://garage.garage-host.svc.cluster.local:3900
+      s3Credentials:
+        accessKeyId:
+          name: nei-backup-s3-secret
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: nei-backup-s3-secret
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+      data:
+        compression: gzip
+    retentionPolicy: "30d"
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: nei-postgres-backup
+  namespace: rafael-homelab
+spec:
+  # 02:40, out of the way of the other apps' 02:30.
+  schedule: "0 40 2 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: nei-postgres
+---
+# During the event, nightly is not enough: the evening IS the data, and it is
+# four hours long. This takes a base backup every half hour between 14:00 and
+# 23:30 on the day, on top of the continuous WAL archive.
+#
+# Suspend it once the night is over: `suspend: true`, or delete the object.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: nei-postgres-event-backup
+  namespace: rafael-homelab
+spec:
+  schedule: "0 0,30 14-23 25 9 *"
+  backupOwnerReference: self
+  cluster:
+    name: nei-postgres

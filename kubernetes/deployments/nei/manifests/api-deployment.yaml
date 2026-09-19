@@ -1,0 +1,136 @@
+# The API, and the initContainer that builds the database the first time.
+#
+# WHY AN INIT CONTAINER, not an Argo PreSync hook: this cluster has no image
+# updater, so a new image arrives by `kubectl rollout restart`, not by a sync. A
+# PreSync hook only fires on a sync, so a restart-driven deploy would start new
+# code against an empty schema. Here the ordering is structural — this exits 0
+# before anything serves, which makes `rollout restart` a complete deploy.
+#
+# The bootstrap asks before it writes: if `pins` exists it does nothing at all.
+# It never drops, truncates or deletes. See api/src/exhibit/bootstrap.py.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nei-api
+  namespace: rafael-homelab
+spec:
+  # One replica is right for one evening: the writes are small, the reads are
+  # cached for two seconds in the process, and a second replica would only add a
+  # second cache to be stale. Scaling up is safe if it is ever needed — nothing
+  # in the API keeps state between requests.
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: nei-api
+  template:
+    metadata:
+      labels:
+        app: nei-api
+    spec:
+      initContainers:
+        - name: bootstrap
+          image: hydrodog11/nei-api:latest
+          imagePullPolicy: Always
+          # the venv directly: uv wants a writable cache under $HOME and this
+          # container has a read-only root filesystem
+          command: ["/app/.venv/bin/python", "-m", "exhibit.bootstrap"]
+          envFrom:
+            - configMapRef:
+                name: nei-env
+            - secretRef:
+                name: nei-db-secret
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+              ephemeral-storage: 64Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+              ephemeral-storage: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: api
+          image: hydrodog11/nei-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: nei-env
+            # after the ConfigMap, deliberately: later entries win, so a key
+            # that ever reappears above cannot shadow the credentialed URL
+            - secretRef:
+                name: nei-db-secret
+            - secretRef:
+                name: nei-app-secret
+          # /health/live touches nothing external: a Postgres blip must not
+          # restart the pod and turn a recoverable dependency failure into a
+          # crash loop.
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 3
+          # /health/ready round-trips the database, so a pod that cannot read
+          # the board leaves the Service.
+          readinessProbe:
+            httpGet:
+              path: /api/health/ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+              ephemeral-storage: 64Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+              ephemeral-storage: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nei-api
+  namespace: rafael-homelab
+spec:
+  selector:
+    app: nei-api
+  ports:
+    - port: 8000
+      targetPort: 8000

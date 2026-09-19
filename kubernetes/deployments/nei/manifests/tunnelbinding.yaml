@@ -1,0 +1,21 @@
+# The public door. Visitors are on mobile data in a street in Coimbra, so the
+# exhibit must not depend on the venue's network in any way — the tunnel is what
+# makes that true.
+#
+# It points at the web Service, which also fronts /api. Nothing routes /admin.
+apiVersion: networking.cfargotunnel.com/v1alpha1
+kind: TunnelBinding
+metadata:
+  name: nei
+  namespace: rafael-homelab
+subjects:
+  - name: nei-web
+    spec:
+      fqdn: nei.duarte-correia.pt
+      protocol: http
+      http2Origin: true
+      noTlsVerify: true
+      target: http://nei-web.rafael-homelab.svc.cluster.local:80
+tunnelRef:
+  kind: ClusterTunnel
+  name: porto-cluster-tunnel
