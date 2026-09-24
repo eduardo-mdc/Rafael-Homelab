@@ -7,8 +7,11 @@
 # restart costs seconds and loses nothing.
 #
 #   CRYSTAL       weight at which a thread sets: taut, teal, immovable
-#   HALFLIFE_MIN  unused threads fade with this half-life. Lower it if the board
-#                 looks frozen by 21:00; raise it if it is thrashing.
+#   HALFLIFE_MIN  how fast a thread's weight fades. Effectively OFF (a year) as
+#                 of P18: the phone no longer writes threads at all -- no
+#                 retells, no bindings, no routes -- so the seeded board has
+#                 nothing to compete with, and decay only erased it. At 90 the
+#                 seed was flat within a day and the wall drew a grey web.
 #   ARRIVAL_EVERY routes and retellings between new concepts arriving
 #   BRIDGE_MIN/MAX pins a visitor puts between the two ends. Lower MAX if a
 #                 queue forms.
@@ -21,7 +24,7 @@ metadata:
   namespace: rafael-homelab
 data:
   CRYSTAL: "10"
-  HALFLIFE_MIN: "90"
+  HALFLIFE_MIN: "525600"
   ARRIVAL_EVERY: "6"
   FLOAT_MIN: "3"
   FLOAT_MAX: "8"
