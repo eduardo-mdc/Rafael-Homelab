@@ -67,6 +67,20 @@ data:
       ''      $scheme;
     }
 
+    # X-Forwarded-Host is OVERWRITTEN below, not passed through like the proto
+    # above, and the asymmetry is deliberate.
+    #
+    # prod.py sets USE_X_FORWARDED_HOST = True, so Django validates that header
+    # against ALLOWED_HOSTS in PREFERENCE to the real Host — and cloudflared
+    # forwards whatever headers the client sent, so a request from the internet
+    # can carry one. Every location therefore sets it to $host, the name this
+    # request actually arrived for, so a client-supplied value is discarded
+    # rather than believed.
+    #
+    # Nothing in the app reflects the host into a URL or an email, so the
+    # reachable damage was small; this is cheap enough not to depend on that
+    # staying true as the app grows.
+
     server {
       listen 8080;
       server_tokens off;
@@ -101,6 +115,7 @@ data:
         proxy_pass         http://nubiup-media.rafael-homelab.svc.cluster.local:80;
         proxy_set_header   Host $host;
         proxy_set_header   X-Forwarded-Proto $forwarded_proto;
+        proxy_set_header   X-Forwarded-Host $host;
         proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
       }
 
@@ -112,6 +127,7 @@ data:
         proxy_http_version 1.1;
         proxy_set_header   Host $host;
         proxy_set_header   X-Forwarded-Proto $forwarded_proto;
+        proxy_set_header   X-Forwarded-Host $host;
         proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
       }
 
@@ -124,6 +140,7 @@ data:
         proxy_http_version 1.1;
         proxy_set_header   Host $host;
         proxy_set_header   X-Forwarded-Proto $forwarded_proto;
+        proxy_set_header   X-Forwarded-Host $host;
         proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
       }
 
@@ -143,6 +160,7 @@ data:
         # a failure that reads as a routing bug and is not one.
         proxy_set_header   Host $host;
         proxy_set_header   X-Forwarded-Proto $forwarded_proto;
+        proxy_set_header   X-Forwarded-Host $host;
         proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
       }
 
@@ -160,6 +178,7 @@ data:
         proxy_set_header   Connection $connection_upgrade;
         proxy_set_header   Host $host;
         proxy_set_header   X-Forwarded-Proto $forwarded_proto;
+        proxy_set_header   X-Forwarded-Host $host;
         proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
         # Long enough for the websocket to idle without being cut.
         proxy_read_timeout 86400;
@@ -212,7 +231,7 @@ spec:
         # ConfigMap updates the mounted file and nginx never reloads, so the
         # rules in git and the rules in force drift apart silently.
         # Bump this whenever default.conf above changes.
-        nubiup.io/config-revision: "1"
+        nubiup.io/config-revision: "2"
     spec:
       containers:
         - name: nginx

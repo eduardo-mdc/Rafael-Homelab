@@ -40,7 +40,13 @@ data:
   # no build_absolute_uri, no get_host — and create_initial_pages writes the
   # Wagtail Site row with is_default_site, so an unmatched Host still resolves to
   # nubi.duarte-correia.pt for page.full_url and the sitemap.
-  DJANGO_ALLOWED_HOSTS: "nubi.duarte-correia.pt,nubiup-web.rafael-homelab.svc.cluster.local,nubiup-web.rafael-homelab,nubiup-web"
+  # Exactly two names, and no more: the public one, and the FQDN in
+  # next-deployment.yaml's DJANGO_API_URL. The short spellings (nubiup-web,
+  # nubiup-web.rafael-homelab) resolve in-cluster too and were listed at first,
+  # but nothing sends them, and each extra entry is one more value an attacker
+  # can steer Django's idea of its own host towards. Change DJANGO_API_URL and
+  # this list changes with it.
+  DJANGO_ALLOWED_HOSTS: "nubi.duarte-correia.pt,nubiup-web.rafael-homelab.svc.cluster.local"
 
   # Public origin only. This governs browser POSTs — the CMS, the staff SPA and
   # the public forms — which all arrive over the tunnel on the real name. The
