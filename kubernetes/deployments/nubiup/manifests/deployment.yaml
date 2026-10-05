@@ -314,7 +314,19 @@ spec:
         # Serves /media/ off the volume. Read-only, and the vault is deliberately
         # absent — do not add it.
         - name: media
-          image: nginx:1.27-alpine
+          # nginxinc/nginx-unprivileged, NOT stock nginx:alpine. Stock starts its
+          # master as root and needs CHOWN/SETUID/SETGID/DAC_OVERRIDE to drop to
+          # the nginx user and write /var/cache/nginx and /var/run — all of which
+          # `capabilities.drop: ["ALL"]` below takes away, so it died in
+          # CrashLoopBackOff on the first deploy. Because the three containers
+          # share one pod, that took the whole site down: a pod is Ready only when
+          # every container is, so nubiup-web had no endpoints, and nubiup-next's
+          # SSR fetches failed with `connect EPERM` — Cilium's answer for a
+          # Service with no backends — while Django itself was serving 200s.
+          #
+          # This image is uid 101 with no root phase and already listens on 8080,
+          # which is the port this ConfigMap and the Service were written for.
+          image: nginxinc/nginx-unprivileged:1.27-alpine
           ports:
             - containerPort: 8080
           volumeMounts:
@@ -340,21 +352,26 @@ spec:
               cpu: 200m
               memory: 128Mi
               ephemeral-storage: 256Mi
-          # Weaker than the other three, and the reason is the image. Stock
-          # `nginx:alpine` starts its master process as root before dropping to
-          # the nginx user, and writes to /var/cache/nginx and /var/run, so
-          # runAsNonRoot would put it in CrashLoopBackOff. The fix is
-          # `nginxinc/nginx-unprivileged` (uid 101, already listening on 8080
-          # here) — a small change that must not be made blind, because this
-          # container is how every CMS image reaches the site.
+          # The same context as the other three, except the uid: 101 is this
+          # image's own nginx user, which owns /var/cache/nginx and /tmp inside
+          # it. Forcing 1000 here would reintroduce the crash from the other
+          # direction — the dirs nginx writes would not be his.
           #
-          # VERIFY: make that swap and lift this to the full context above, then
-          # confirm an image renders on a public page.
+          # Reading the media volume still works at uid 101 because `fsGroup:
+          # 1000` on the pod adds gid 1000 as a supplementary group to every
+          # container, and Django writes uploads group-readable.
+          #
+          # VERIFY: confirm an uploaded image actually renders on a public page.
+          # This container is how every CMS image reaches the site, and a 403 on
+          # /media/ would look like a broken page rather than a permissions bug.
           securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 101
             allowPrivilegeEscalation: false
             capabilities:
-              drop: ["ALL"]
               # nginx binds 8080, so it needs no privileged port.
+              drop: ["ALL"]
             seccompProfile:
               type: RuntimeDefault
       volumes:
