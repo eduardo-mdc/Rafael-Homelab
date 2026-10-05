@@ -68,6 +68,11 @@ spec:
   ingress:
     - from:
         # The application, including the migrate initContainer.
+        #
+        # nubiup-job is the label one-shot maintenance Jobs wear —
+        # superuser-job.yaml today. A separate label rather than reusing
+        # nubiup-web, because that one is the nubiup-web and nubiup-media Service
+        # selector and a Job wearing it would be sent live site traffic.
         - podSelector:
             matchExpressions:
               - key: app
@@ -75,6 +80,7 @@ spec:
                 values:
                   - nubiup-web
                   - nubiup-beat
+                  - nubiup-job
         # The instances themselves. THREE of them — streaming replication is
         # pod-to-pod, so omitting this breaks the cluster rather than securing it.
         - podSelector:
