@@ -126,9 +126,13 @@ will not resolve.
 | `rafael-nubiup-redis-password` | Same generator, same character caveat — it goes into four `redis://` URLs | Redis auth |
 | `rafael-nubiup-dockerhub-username` | The Docker Hub account name | Image pull |
 | `rafael-nubiup-dockerhub-token` | A **read-only** Docker Hub access token, not the account password | Image pull |
-| `rafael-nubiup-backup-s3-key-id` | Garage key id, scoped to the `porto-k8s-backup` bucket | Postgres backups |
-| `rafael-nubiup-backup-s3-secret` | The matching Garage secret | Postgres backups |
-| `rafael-nubiup-drive-service-account-b64` | `base64 -w0 drive-sa.json` — one line, no newlines | Drive sync (optional) |
+| `rafael-nubiup-drive-service-account-b64` | `base64 -w0 drive-sa.json` — one line, no newlines | Drive sync |
+
+Six items, not eight. The two Garage keys this table used to list are not needed
+yet: **Postgres backups are commented out** in `postgres-cluster.yaml`, which
+holds the reason and the steps to turn them on. Do that before staff enter
+content they would mind losing — until then nothing can undo a bad migration or
+a wipe, and the three replicas will not help, because they replicate it.
 
 `rafael-nubiup-db-username` is **no longer read**. It used to be, and sourcing a
 role *name* from a secret store only created a way to get it wrong: a random value
@@ -148,15 +152,21 @@ Verify they resolved before going further — both should report `SecretSynced`:
 kubectl -n rafael-homelab get externalsecret
 kubectl -n rafael-homelab get secret \
   nubiup-app-secret nubiup-db-secret nubiup-redis-secret \
-  nubiup-dockerhub nubiup-backup-s3-secret
+  nubiup-dockerhub nubiup-drive-secret
 ```
 
-**Redis, Docker Hub and the backup credentials are not optional.** Redis rejects
-every connection without `nubiup-redis-secret` (it sets `--requirepass` from it,
-and the four `redis://` URLs are templated from the same value), the pull secret
-is what keeps the private image pullable, and without the Garage key the CNPG
-cluster archives no WAL. `nubiup-drive-secret` is the one that can wait — the
-site works without Drive sync, the Resources page is just empty.
+**All six are required, the Drive one included.** Redis rejects every connection
+without `nubiup-redis-secret` (it sets `--requirepass` from it, and the four
+`redis://` URLs are templated from the same value), and `nubiup-dockerhub` is
+what the `imagePullSecrets` on every workload name.
+
+`nubiup-drive-secret` used to be described here as the one that could wait. It
+cannot: `web` and `worker` pull it with a plain `envFrom.secretRef`, so until it
+exists those pods sit in `CreateContainerConfigError` and the site never serves.
+The *feature* is optional — without a real service account the Resources page is
+just empty — but the Secret is not, so put something in the Bitwarden item even
+if Drive is not wired up yet. To make it genuinely optional instead, add
+`optional: true` to both `secretRef`s in `deployment.yaml`.
 
 ### 2. Publish the image
 

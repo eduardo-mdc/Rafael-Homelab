@@ -33,49 +33,68 @@ spec:
   # cannot silently re-enable it.
   enableSuperuserAccess: false
 
-  # Point-in-time recovery to Garage, the S3 service already running in this
-  # cluster (namespace garage-host).
+  # ── BACKUPS ARE OFF. THIS DATABASE IS UNPROTECTED. ─────────────────────────
+  # Point-in-time recovery to Garage, written out below and commented out.
   #
   # THREE INSTANCES IS NOT A BACKUP. Replication survives a node dying; it
   # faithfully replicates a bad migration, a dropped table, or a
-  # create_initial_pages regression to all three copies at once. This is the only
-  # thing here that can undo one.
+  # create_initial_pages regression to all three copies at once. The block below
+  # is the only thing here that could undo one, so this is a real gap — enable it
+  # before staff enter content they would mind losing. portfolio carries the same
+  # block commented out for the same reason, so this is not a new exception.
+  #
+  # Off rather than on, because none of the three facts it depends on was ever
+  # checked against the cluster: that Garage runs in garage-host, that this is its
+  # service name and port, and that the porto-k8s-backup bucket exists. Enabled
+  # and wrong is worse than off — Postgres cannot recycle WAL it failed to
+  # archive, so the segments pile up on a 5Gi volume until writes stop. Off, the
+  # database is merely unprotected.
+  #
+  # TO ENABLE — nothing here changes but the comment markers:
+  #   1. Confirm the service:  kubectl -n garage-host get svc
+  #   2. Confirm the bucket:   kubectl -n garage-host exec -it <garage-pod> -- \
+  #                              /garage bucket list
+  #   3. Make a key scoped to that bucket, NOT an admin key:
+  #        /garage key create nubiup-backup
+  #        /garage bucket allow --read --write porto-k8s-backup --key nubiup-backup
+  #        /garage key info nubiup-backup --show-secret
+  #   4. Put the pair in Bitwarden as rafael-nubiup-backup-s3-key-id and
+  #      rafael-nubiup-backup-s3-secret, then uncomment the nubiup-backup-s3-secret
+  #      ExternalSecret in external-secret.yaml.
+  #   5. Uncomment this block and the ScheduledBackup below; let Argo sync.
+  #   6. Take a manual `kubectl cnpg backup nubiup-postgres` and RESTORE it into a
+  #      scratch cluster. A backup nobody has restored is a hypothesis.
   #
   # Plain HTTP to the endpoint is fine: the hop never leaves the cluster.
-  #
-  # VERIFY before trusting it: the bucket name and endpoint below were written
-  # without cluster access. Check the Garage service name and that the bucket
-  # exists, then take a manual `kubectl cnpg backup nubiup-postgres` and RESTORE
-  # it into a scratch cluster. A backup nobody has restored is a hypothesis.
-  backup:
-    barmanObjectStore:
-      destinationPath: s3://porto-k8s-backup/cnpg/nubiup
-      endpointURL: http://garage.garage-host.svc.cluster.local:3900
-      s3Credentials:
-        accessKeyId:
-          name: nubiup-backup-s3-secret
-          key: ACCESS_KEY_ID
-        secretAccessKey:
-          name: nubiup-backup-s3-secret
-          key: ACCESS_SECRET_KEY
-      wal:
-        compression: gzip
-      data:
-        compression: gzip
-    # 30 days of PITR. Wagtail page revisions and the newsletter/certificate logs
-    # are small; the cost of a longer window is storage nobody is short of.
-    retentionPolicy: "30d"
----
-# Daily base backup. WAL archiving (above) runs continuously and is what makes
-# point-in-time recovery possible; this is the anchor those WAL files replay from.
-apiVersion: postgresql.cnpg.io/v1
-kind: ScheduledBackup
-metadata:
-  name: nubiup-postgres-backup
-  namespace: rafael-homelab
-spec:
-  # CNPG uses SIX-field cron (seconds first). 02:30 daily.
-  schedule: "0 30 2 * * *"
-  backupOwnerReference: self
-  cluster:
-    name: nubiup-postgres
+#  backup:
+#    barmanObjectStore:
+#      destinationPath: s3://porto-k8s-backup/cnpg/nubiup
+#      endpointURL: http://garage.garage-host.svc.cluster.local:3900
+#      s3Credentials:
+#        accessKeyId:
+#          name: nubiup-backup-s3-secret
+#          key: ACCESS_KEY_ID
+#        secretAccessKey:
+#          name: nubiup-backup-s3-secret
+#          key: ACCESS_SECRET_KEY
+#      wal:
+#        compression: gzip
+#      data:
+#        compression: gzip
+#    # 30 days of PITR. Wagtail page revisions and the newsletter/certificate logs
+#    # are small; the cost of a longer window is storage nobody is short of.
+#    retentionPolicy: "30d"
+#---
+## Daily base backup. WAL archiving (above) runs continuously and is what makes
+## point-in-time recovery possible; this is the anchor those WAL files replay from.
+#apiVersion: postgresql.cnpg.io/v1
+#kind: ScheduledBackup
+#metadata:
+#  name: nubiup-postgres-backup
+#  namespace: rafael-homelab
+#spec:
+#  # CNPG uses SIX-field cron (seconds first). 02:30 daily.
+#  schedule: "0 30 2 * * *"
+#  backupOwnerReference: self
+#  cluster:
+#    name: nubiup-postgres
