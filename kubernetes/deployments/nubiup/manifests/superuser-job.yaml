@@ -53,7 +53,9 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: nubiup-create-superuser-1
+  # -2, because -1 already ran and a Job is immutable. Bumping the suffix is how
+  # this gets to run again; the completed -1 stays until this file is deleted.
+  name: nubiup-create-superuser-2
   namespace: rafael-homelab
 spec:
   # Three attempts, then stop and stay Failed where it can be seen. The usual
@@ -87,29 +89,78 @@ spec:
           #
           # set_password() bypasses Django's password validators, so the strength
           # of this account rests entirely on what is in Bitwarden. Make it long.
+          #
+          # It also does two things the first version did not, because the first
+          # version created the account and the login still said the credentials
+          # did not match:
+          #
+          #   1. STRIPS the password. Bitwarden keeps a value verbatim, so a
+          #      trailing newline from a paste is part of the secret and gets
+          #      hashed with it — and then a password typed by hand can never
+          #      match. Stripping makes the stored value and the typed one agree.
+          #      Leading/trailing whitespace in a password buys nothing anyway.
+          #   2. CLEARS the django-axes lockout for this username. axes blocks by
+          #      username after 5 failures for an hour (AXES_FAILURE_LIMIT /
+          #      AXES_COOLOFF_TIME), and a locked account refuses the CORRECT
+          #      password with the same "did not match" message. Attempts made
+          #      while the account did not exist still count. Normally this is
+          #      `manage.py axes_reset_username`, which needs the shell this Job
+          #      exists to replace.
+          #
+          # The diagnostics it prints are deliberately not the password: a length
+          # and a hash prefix. Check the paste against it locally with
+          #   printf '%s' '<what you pasted>' | sha256sum
+          # and compare the first 12 characters.
           command:
             - sh
             - -lc
             - |
               python - <<'PY'
+              import hashlib
               import os
+
               import django
 
               django.setup()  # DJANGO_SETTINGS_MODULE comes from the ConfigMap
 
               from django.contrib.auth import get_user_model
+              from django.core.management import call_command
 
               User = get_user_model()
               username = os.environ["ADMIN_USERNAME"]
+              raw = os.environ["ADMIN_PASSWORD"]
+              password = raw.strip()
+
+              print(f"secret: len(raw)={len(raw)} len(stripped)={len(password)}")
+              if raw != password:
+                  print("secret: HAD surrounding whitespace — that was the login failure")
+              print(f"secret: sha256(stripped)[:12]={hashlib.sha256(password.encode()).hexdigest()[:12]}")
+
               user, created = User.objects.get_or_create(
                   username=username,
                   defaults={"email": os.environ.get("ADMIN_EMAIL", "")},
               )
               user.is_staff = True
               user.is_superuser = True
-              user.set_password(os.environ["ADMIN_PASSWORD"])
+              user.is_active = True
+              user.set_password(password)
               user.save()
-              print(f"{'created' if created else 'updated'} superuser {username}")
+              print(f"user: {'created' if created else 'updated'} {username} "
+                    f"active={user.is_active} staff={user.is_staff} super={user.is_superuser}")
+
+              # How many failures axes had recorded, before clearing them. Over
+              # AXES_FAILURE_LIMIT and the account was locked, whatever was typed.
+              try:
+                  from axes.models import AccessAttempt
+
+                  attempts = AccessAttempt.objects.filter(username=username)
+                  print(f"axes: {attempts.count()} attempt row(s), "
+                        f"failures={[a.failures_since_start for a in attempts]}")
+              except Exception as exc:  # axes internals are not a contract
+                  print(f"axes: could not read attempts ({exc})")
+
+              call_command("axes_reset_username", username)
+              print(f"axes: lockout cleared for {username}")
               PY
           envFrom:
             # The same environment the web container gets: settings module,
