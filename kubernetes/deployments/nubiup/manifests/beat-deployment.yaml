@@ -24,6 +24,12 @@ spec:
     metadata:
       labels:
         app: nubiup-beat
+      annotations:
+        # Bump with the one in deployment.yaml — same reason, same value. beat
+        # reads the same ConfigMap and the same secrets, so a change either pod
+        # needs is a change both need, and leaving beat behind runs the scheduler
+        # with a different environment than the worker it feeds.
+        nubiup.io/env-revision: "2"
     spec:
       # See the note in deployment.yaml — the image requires credentials.
       imagePullSecrets:

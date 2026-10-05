@@ -65,6 +65,21 @@ spec:
     metadata:
       labels:
         app: nubiup-web
+      annotations:
+        # BUMP THIS whenever configmap.yaml or an ExternalSecret this pod reads
+        # changes. envFrom is evaluated once, when the container starts, so an
+        # Argo sync that updates the ConfigMap changes NOTHING in a running pod —
+        # the new value sits in the cluster, unread, and the symptom is a fix that
+        # "did not work".
+        #
+        # That is not hypothetical: widening DJANGO_ALLOWED_HOSTS to admit the
+        # in-cluster Service name left /en/ at 502 until the pod was recreated.
+        # Touching this annotation changes the pod template, which is what makes
+        # Argo roll the pod and reread the environment.
+        #
+        # Safe for this Deployment specifically because the strategy is Recreate:
+        # the RWO media and vault volumes cannot be held by two pods at once.
+        nubiup.io/env-revision: "2"
     spec:
       # The image runs as appuser (uid/gid 1000) and the CSI mounts volumes
       # root-owned, so without fsGroup the media and vault volumes are effectively
