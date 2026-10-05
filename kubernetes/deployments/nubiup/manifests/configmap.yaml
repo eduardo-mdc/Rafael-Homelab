@@ -23,7 +23,28 @@ data:
   # Django rejects any Host header not listed here, so it must include every
   # hostname the gateway and tunnel terminate. nubiup-proxy passes the client's
   # Host through untouched, so adding a front door did not add a name here.
-  DJANGO_ALLOWED_HOSTS: "nubi.duarte-correia.pt"
+  #
+  # THE SERVICE NAMES ARE NOT OPTIONAL. nubiup-next server-renders every public
+  # page by fetching DJANGO_API_URL — the in-cluster Service — so Django sees
+  # that name as the Host and answered 400 to every SSR request while this listed
+  # only the public name. The site was 502 on /en/ with a perfectly healthy
+  # Django behind it.
+  #
+  # web/src/lib/api.ts tries to forward the browser's Host on those fetches,
+  # which looks like it should make this unnecessary. It cannot: Node's fetch
+  # (undici) silently DROPS a Host header, verified by handing one to a local
+  # server and reading back what arrived. So the Host is always the URL's own
+  # authority, and that is what must be allowed here.
+  #
+  # Safe, because nothing in the content API builds URLs from the request Host —
+  # no build_absolute_uri, no get_host — and create_initial_pages writes the
+  # Wagtail Site row with is_default_site, so an unmatched Host still resolves to
+  # nubi.duarte-correia.pt for page.full_url and the sitemap.
+  DJANGO_ALLOWED_HOSTS: "nubi.duarte-correia.pt,nubiup-web.rafael-homelab.svc.cluster.local,nubiup-web.rafael-homelab,nubiup-web"
+
+  # Public origin only. This governs browser POSTs — the CMS, the staff SPA and
+  # the public forms — which all arrive over the tunnel on the real name. The
+  # SSR fetches above are server-to-server GETs and need nothing here.
   CSRF_TRUSTED_ORIGINS: "https://nubi.duarte-correia.pt"
 
   # How many proxies sit between the client and Django, for DRF's throttle
