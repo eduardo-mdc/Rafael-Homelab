@@ -178,8 +178,23 @@ spec:
             # credentialed URL. Carries the four redis:// URLs.
             - secretRef:
                 name: nubiup-redis-secret
+            # OPTIONAL, unlike every other secretRef here: there is no Google
+            # service account yet, so nubiup-drive-secret does not exist and the
+            # ExternalSecret that would create it is commented out. Without
+            # `optional: true` the kubelet refuses to build the container and the
+            # pod sits in CreateContainerConfigError — a missing nice-to-have
+            # would take the whole site down.
+            #
+            # Nothing is scheduled against it: `sync_drive_resources` is a
+            # management command run by hand, so an absent variable costs an empty
+            # Resources page and nothing else. To wire Drive up later, with the
+            # site running: create rafael-nubiup-drive-service-account-b64 in
+            # Bitwarden, uncomment the ExternalSecret in external-secret.yaml, let
+            # Argo sync, then `rollout restart deploy/nubiup-web deploy/nubiup-worker`
+            # — envFrom is read once at container start. No edit here.
             - secretRef:
                 name: nubiup-drive-secret
+                optional: true
           volumeMounts:
             - name: media
               mountPath: /app/media
@@ -262,8 +277,10 @@ spec:
             # credentialed URL. Carries the four redis:// URLs.
             - secretRef:
                 name: nubiup-redis-secret
+            # Optional for the same reason as on `web` above — see that comment.
             - secretRef:
                 name: nubiup-drive-secret
+                optional: true
           volumeMounts:
             # Read: newsletter attachments composed into outgoing mail.
             - name: media

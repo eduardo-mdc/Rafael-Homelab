@@ -126,13 +126,19 @@ will not resolve.
 | `rafael-nubiup-redis-password` | Same generator, same character caveat — it goes into four `redis://` URLs | Redis auth |
 | `rafael-nubiup-dockerhub-username` | The Docker Hub account name | Image pull |
 | `rafael-nubiup-dockerhub-token` | A **read-only** Docker Hub access token, not the account password | Image pull |
-| `rafael-nubiup-drive-service-account-b64` | `base64 -w0 drive-sa.json` — one line, no newlines | Drive sync |
 
-Six items, not eight. The two Garage keys this table used to list are not needed
-yet: **Postgres backups are commented out** in `postgres-cluster.yaml`, which
-holds the reason and the steps to turn them on. Do that before staff enter
-content they would mind losing — until then nothing can undo a bad migration or
-a wipe, and the three replicas will not help, because they replicate it.
+**Five items, and that is the whole list.** Three more used to be here and are
+not needed to deploy:
+
+| Not needed now | Why | Turn it on |
+|---|---|---|
+| `rafael-nubiup-backup-s3-key-id`, `rafael-nubiup-backup-s3-secret` | Postgres backups are commented out | `postgres-cluster.yaml` |
+| `rafael-nubiup-drive-service-account-b64` | No Google service account yet; the secret is `optional: true` on `web` and `worker` | `external-secret.yaml` |
+
+Each file holds its own steps. Both are additive later, with the site running —
+but backups are the one with a deadline: do them before staff enter content they
+would mind losing. Until then nothing can undo a bad migration or a wipe, and the
+three replicas will not help, because they replicate it.
 
 `rafael-nubiup-db-username` is **no longer read**. It used to be, and sourcing a
 role *name* from a secret store only created a way to get it wrong: a random value
@@ -146,27 +152,27 @@ supplies Django's `POSTGRES_USER`. Any other value and CNPG creates one role whi
 Django authenticates as another — the pod then fails on `role "..." does not exist`,
 which reads like a password problem.
 
-Verify they resolved before going further — both should report `SecretSynced`:
+Verify they resolved before going further — all four should report `SecretSynced`:
 
 ```bash
 kubectl -n rafael-homelab get externalsecret
 kubectl -n rafael-homelab get secret \
-  nubiup-app-secret nubiup-db-secret nubiup-redis-secret \
-  nubiup-dockerhub nubiup-drive-secret
+  nubiup-app-secret nubiup-db-secret nubiup-redis-secret nubiup-dockerhub
 ```
 
-**All six are required, the Drive one included.** Redis rejects every connection
-without `nubiup-redis-secret` (it sets `--requirepass` from it, and the four
-`redis://` URLs are templated from the same value), and `nubiup-dockerhub` is
-what the `imagePullSecrets` on every workload name.
+Four ExternalSecrets from five Bitwarden items: `nubiup-dockerhub` is templated
+from two of them. **None of the four is optional.** Redis rejects every
+connection without `nubiup-redis-secret` (it sets `--requirepass` from it, and
+the four `redis://` URLs are templated from the same value), and
+`nubiup-dockerhub` is what the `imagePullSecrets` on every workload name — both
+images are public, so a pull would survive without it, but a named Secret that
+does not exist is a warning on every pod for no reason.
 
-`nubiup-drive-secret` used to be described here as the one that could wait. It
-cannot: `web` and `worker` pull it with a plain `envFrom.secretRef`, so until it
-exists those pods sit in `CreateContainerConfigError` and the site never serves.
-The *feature* is optional — without a real service account the Resources page is
-just empty — but the Secret is not, so put something in the Bitwarden item even
-if Drive is not wired up yet. To make it genuinely optional instead, add
-`optional: true` to both `secretRef`s in `deployment.yaml`.
+`nubiup-drive-secret` is the exception, and the only `optional: true` secretRef
+in this namespace. Until that was set, its absence was not a missing
+nice-to-have: `envFrom` on a Secret that does not exist leaves the pod in
+`CreateContainerConfigError`, so an unwired Drive would have kept the site from
+serving at all.
 
 ### 2. Publish the image
 
@@ -389,9 +395,11 @@ kubectl -n rafael-homelab exec deploy/nubiup-web -c web -- \
 - **Newsletter and certificate sends need the worker and Redis healthy.** If a
   queued campaign never leaves, check the `worker` container logs before suspecting
   SMTP.
-- **Google Drive sync** is wired but needs its secret. `external-secret.yaml`
-  now provides `GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON_B64` to the web and worker
-  containers from Bitwarden's `rafael-nubiup-drive-service-account-b64`; create
-  that item and the sync starts working. Never the ConfigMap — it is a private key. Until then `sync_drive_resources` raises
-  `DriveCredentialError` and the resources page stays empty. Setup steps are in the
-  app repo at `docs/GOOGLE_DRIVE_SETUP.md`.
+- **Google Drive sync is off, and off is a supported state.** Its ExternalSecret
+  is commented out in `external-secret.yaml` and `web`/`worker` take the Secret
+  with `optional: true`, so the pods start without it. `sync_drive_resources`
+  raises `DriveCredentialError` if anyone runs it, and the Resources page stays
+  empty; nothing else notices, because the sync is a hand-run command and nothing
+  schedules it. The four steps to turn it on, with the site running, are in
+  `external-secret.yaml`; the Google-side setup is in the app repo at
+  `docs/GOOGLE_DRIVE_SETUP.md`. Never the ConfigMap — it is a private key.
