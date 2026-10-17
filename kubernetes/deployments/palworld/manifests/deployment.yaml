@@ -17,7 +17,10 @@ metadata:
   labels:
     app.kubernetes.io/name: palworld
 spec:
-  replicas: 1 # one process owns the world save; never scale this
+  # Stopped. 0 is the off switch: the pod goes (SIGTERM -> RCON save + shutdown) but the
+  # palworld-data PVC and the world on it stay. Set back to 1 to bring the server up.
+  # Never above 1: one process owns the world save.
+  replicas: 0
   strategy:
     # RWO volume + a server that writes the save in place: the old pod must be gone
     # before the new one attaches. RollingUpdate would deadlock on the volume.
