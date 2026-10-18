@@ -164,6 +164,23 @@ data:
         proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
       }
 
+      # The CMS preview — mirrors nginx/default.conf in the app repo. Wagtail
+      # redirects the editor to FRONTEND_PREVIEW_URL (/preview?token=…), a Next
+      # page with no locale prefix. Without this it falls to Django, which
+      # redirects it to /en/preview/ — a Next 404 — and every preview is blank.
+      # A regex so the bare /preview (no trailing slash, as the configmap's
+      # value builds it; Next 308s it to /preview/) matches too, and nothing
+      # longer such as /previews/ does. The Next response carries the preview's
+      # own framing policy (SAMEORIGIN), so the CMS on this origin can embed it.
+      location ~ ^/preview(/|$) {
+        proxy_pass         http://nubiup-next.rafael-homelab.svc.cluster.local:3000;
+        proxy_http_version 1.1;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Forwarded-Proto $forwarded_proto;
+        proxy_set_header   X-Forwarded-Host $host;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+      }
+
       # ── Everything else is Django ───────────────────────────────────────────
       # /cms/, /staff/ and its WhiteNoise /static/ bundle, /api/v2/, /documents/,
       # /robots.txt, /healthz, /readyz, the ws/notifications/ websocket, and the
